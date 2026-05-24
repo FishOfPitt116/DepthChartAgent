@@ -12,10 +12,12 @@ import os
 
 from agents import Agent
 
+from depth_chart_agent.agent.hooks import DepthChartAgentHooks
 from depth_chart_agent.agent.prompt import SYSTEM_PROMPT
 
 depth_chart_agent = Agent(
     name="DepthChartAgent",
     instructions=SYSTEM_PROMPT,
     model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+    hooks=DepthChartAgentHooks(),
 )
