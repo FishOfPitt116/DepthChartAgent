@@ -16,6 +16,7 @@ from depth_chart_agent.mlb_client import (
     get_player_stats,
     get_recent_lineups,
     get_roster,
+    get_team_id,
     get_transactions,
 )
 
@@ -61,6 +62,98 @@ def _mock_response(json_data: dict) -> MagicMock:
     mock.json.return_value = json_data
     mock.raise_for_status.return_value = None
     return mock
+
+
+# --- get_team_id ---
+
+TEAMS_RESPONSE = {
+    "teams": [
+        {
+            "id": 147,
+            "name": "New York Yankees",
+            "teamName": "Yankees",
+            "locationName": "New York",
+            "abbreviation": "NYY",
+            "franchiseName": "New York",
+            "clubName": "Yankees",
+            "active": True,
+        },
+        {
+            "id": 121,
+            "name": "New York Mets",
+            "teamName": "Mets",
+            "locationName": "New York",
+            "abbreviation": "NYM",
+            "franchiseName": "New York",
+            "clubName": "Mets",
+            "active": True,
+        },
+        {
+            "id": 111,
+            "name": "Boston Red Sox",
+            "teamName": "Red Sox",
+            "locationName": "Boston",
+            "abbreviation": "BOS",
+            "franchiseName": "Boston",
+            "clubName": "Red Sox",
+            "active": True,
+        },
+        {
+            "id": 999,
+            "name": "Old Inactive Team",
+            "teamName": "Inactives",
+            "locationName": "Nowhere",
+            "abbreviation": "OIT",
+            "franchiseName": "Nowhere",
+            "clubName": "Inactives",
+            "active": False,
+        },
+    ]
+}
+
+
+def test_get_team_id_full_name():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(TEAMS_RESPONSE)):
+        assert get_team_id("New York Yankees") == 147
+
+
+def test_get_team_id_team_name():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(TEAMS_RESPONSE)):
+        assert get_team_id("Yankees") == 147
+
+
+def test_get_team_id_abbreviation():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(TEAMS_RESPONSE)):
+        assert get_team_id("NYY") == 147
+
+
+def test_get_team_id_case_insensitive():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(TEAMS_RESPONSE)):
+        assert get_team_id("yankees") == 147
+        assert get_team_id("nyy") == 147
+
+
+def test_get_team_id_partial_name_match():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(TEAMS_RESPONSE)):
+        assert get_team_id("Boston") == 111
+
+
+def test_get_team_id_ambiguous_raises():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(TEAMS_RESPONSE)):
+        with pytest.raises(MLBApiError, match="Ambiguous"):
+            get_team_id("New York")
+
+
+def test_get_team_id_no_match_raises():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(TEAMS_RESPONSE)):
+        with pytest.raises(MLBApiError, match="No MLB team"):
+            get_team_id("Purple Penguins")
+
+
+def test_get_team_id_excludes_inactive_teams():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(TEAMS_RESPONSE)):
+        with pytest.raises(MLBApiError, match="No MLB team"):
+            get_team_id("Inactives")
 
 
 # --- get_roster ---

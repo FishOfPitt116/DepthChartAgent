@@ -54,6 +54,49 @@ def _fetch_roster(team_id: int, roster_type: str) -> list[dict]:
     return _parse_roster(data)
 
 
+def get_team_id(query: str) -> int:
+    """
+    Resolve a team name, city, or abbreviation to an MLB team ID.
+
+    Matching is case-insensitive and runs in two passes:
+      1. Exact match against name, teamName, locationName, abbreviation,
+         franchiseName, or clubName.
+      2. Query is a substring of the full team name.
+
+    Raises MLBApiError if no match is found or the query is ambiguous.
+    """
+    data = _get("/teams", sportId=1)
+    teams = [t for t in data.get("teams", []) if t.get("active")]
+
+    q = query.strip().lower()
+
+    exact = [
+        t for t in teams
+        if q in {
+            t.get("name", "").lower(),
+            t.get("teamName", "").lower(),
+            t.get("locationName", "").lower(),
+            t.get("abbreviation", "").lower(),
+            t.get("franchiseName", "").lower(),
+            t.get("clubName", "").lower(),
+        }
+    ]
+    if len(exact) == 1:
+        return exact[0]["id"]
+    if len(exact) > 1:
+        names = [t["name"] for t in exact]
+        raise MLBApiError(f"Ambiguous team identifier '{query}' — matched: {names}")
+
+    partial = [t for t in teams if q in t.get("name", "").lower()]
+    if len(partial) == 1:
+        return partial[0]["id"]
+    if len(partial) > 1:
+        names = [t["name"] for t in partial]
+        raise MLBApiError(f"Ambiguous team identifier '{query}' — matched: {names}")
+
+    raise MLBApiError(f"No MLB team found matching '{query}'")
+
+
 def get_roster(team_id: int) -> list[dict]:
     """Return the 40-man roster with position and IL status for each player."""
     return _fetch_roster(team_id, "40Man")

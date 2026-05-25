@@ -19,6 +19,7 @@ from depth_chart_agent.mlb_client import (
     get_player_stats,
     get_recent_lineups,
     get_roster,
+    get_team_id,
     get_transactions,
 )
 
@@ -31,6 +32,42 @@ JUDGE_ID = 592450
 # Gerrit Cole — reliable pitcher with a full season of data
 COLE_ID = 543037
 
+
+# --- get_team_id ---
+
+@pytest.mark.integration
+def test_get_team_id_full_name():
+    assert get_team_id("New York Yankees") == YANKEES_ID
+
+
+@pytest.mark.integration
+def test_get_team_id_team_name():
+    assert get_team_id("Yankees") == YANKEES_ID
+
+
+@pytest.mark.integration
+def test_get_team_id_abbreviation():
+    assert get_team_id("NYY") == YANKEES_ID
+
+
+@pytest.mark.integration
+def test_get_team_id_case_insensitive():
+    assert get_team_id("yankees") == YANKEES_ID
+
+
+@pytest.mark.integration
+def test_get_team_id_ambiguous_raises():
+    with pytest.raises(MLBApiError, match="Ambiguous"):
+        get_team_id("New York")
+
+
+@pytest.mark.integration
+def test_get_team_id_no_match_raises():
+    with pytest.raises(MLBApiError, match="No MLB team"):
+        get_team_id("Purple Penguins")
+
+
+# --- get_roster ---
 
 @pytest.mark.integration
 def test_get_roster_returns_players():
