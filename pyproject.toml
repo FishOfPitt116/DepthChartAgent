@@ -21,6 +21,12 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/depth_chart_agent"]
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that hit real external APIs (deselected by default)",
+]
+addopts = "-m 'not integration'"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

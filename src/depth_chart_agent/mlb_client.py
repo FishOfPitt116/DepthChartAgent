@@ -36,14 +36,21 @@ def _parse_roster(data: dict) -> list[dict]:
     ]
 
 
+def _fetch_roster(team_id: int, roster_type: str) -> list[dict]:
+    data = _get(f"/teams/{team_id}/roster", rosterType=roster_type)
+    if not data.get("roster"):
+        raise MLBApiError(f"Empty roster returned for team_id={team_id} (rosterType={roster_type})")
+    return _parse_roster(data)
+
+
 def get_roster(team_id: int) -> list[dict]:
     """Return the 40-man roster with position and IL status for each player."""
-    return _parse_roster(_get(f"/teams/{team_id}/roster", rosterType="40Man"))
+    return _fetch_roster(team_id, "40Man")
 
 
 def get_active_roster(team_id: int) -> list[dict]:
     """Return the active (26-man) roster — players available to play today."""
-    return _parse_roster(_get(f"/teams/{team_id}/roster", rosterType="active"))
+    return _fetch_roster(team_id, "active")
 
 
 def get_transactions(team_id: int, days: int = 14) -> list[dict]:

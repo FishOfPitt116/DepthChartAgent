@@ -75,11 +75,10 @@ def test_get_roster_includes_il_note():
     assert result[1]["status"] == "Injured 15-Day"
 
 
-def test_get_roster_empty_roster():
+def test_get_roster_empty_roster_raises():
     with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response({"roster": []})):
-        result = get_roster(147)
-
-    assert result == []
+        with pytest.raises(MLBApiError, match="Empty roster"):
+            get_roster(147)
 
 
 def test_get_roster_http_error():
@@ -147,11 +146,10 @@ def test_get_roster_requests_correct_roster_type():
     assert kwargs["params"]["rosterType"] == "40Man"
 
 
-def test_get_active_roster_empty():
+def test_get_active_roster_empty_raises():
     with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response({"roster": []})):
-        result = get_active_roster(147)
-
-    assert result == []
+        with pytest.raises(MLBApiError, match="Empty roster"):
+            get_active_roster(147)
 
 
 # --- get_transactions ---
