@@ -126,11 +126,34 @@ After writing, call `validate_depth_chart`. See that tool's description for
 the full rule set and return format.
 
 - If validation passes, you MUST stop and report the depth chart as complete.
-- If validation fails, correct only the flagged violations using the
-  appropriate set/remove tools and validate again.
+- If validation fails, you MUST loop back to Phase 1 research before making
+  corrections — do not write blindly. Specifically:
+  - For each player flagged as **missing**: cross-reference the lineup and
+    roster data already in context to determine their correct position and
+    depth string. If that data is insufficient, call
+    `get_player_stats(player_id, ...)` for the flagged player before writing.
+  - For each player flagged as **not on the active roster**: call
+    `remove_player_everywhere` immediately — no research needed.
+  - For each player flagged as **pitcher in field positions**: confirm their
+    correct role from recent lineup data, then move them to rotation or bullpen.
+- After completing research, return to Phase 2 to apply only the corrections
+  identified above, then validate again.
 - You MUST NOT report the depth chart as complete while validation is failing.
 - You MUST NOT attempt more than 3 correction cycles. If validation still
   fails after 3 attempts, report the specific violations and halt.
+
+### Violation Remediation
+
+Do NOT call `remove_player_everywhere` on a player flagged as missing — that
+makes the violation worse. The correct action for each violation type:
+
+- **"missing from the depth chart" (position player)**: Research the player
+  first (see above), then ADD them to the appropriate field position.
+- **"missing from the depth chart" (pitcher)**: Research the player first,
+  then ADD them to the rotation or bullpen.
+- **"not on the active roster"**: REMOVE them everywhere.
+- **"pitcher but only appears in field positions"**: MOVE them to the rotation
+  or bullpen.
 
 ---
 

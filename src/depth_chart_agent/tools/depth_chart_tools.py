@@ -99,12 +99,17 @@ def initialize_depth_chart(team_id: int, team_name: str) -> str:
     """
     roster = get_active_roster(team_id)
     active_roster_ids = [p["player_id"] for p in roster]
+    active_roster = {
+        str(p["player_id"]): {"name": p.get("name", ""), "position": p.get("position", "?")}
+        for p in roster
+    }
     with _get_lock(team_id):
         chart = {
             "team_id": team_id,
             "team_name": team_name,
             "generated_at": _now(),
             "active_roster_ids": active_roster_ids,
+            "active_roster": active_roster,
             "positions": {pos: [] for pos in VALID_POSITIONS},
             "rotation": [],
             "bullpen": [],
@@ -125,11 +130,16 @@ def update_active_roster_ids(team_id: int) -> str:
     """
     roster = get_active_roster(team_id)
     active_roster_ids = [p["player_id"] for p in roster]
+    active_roster = {
+        str(p["player_id"]): {"name": p.get("name", ""), "position": p.get("position", "?")}
+        for p in roster
+    }
     with _get_lock(team_id):
         chart = _read(team_id)
         if chart is None:
             return f"Error: no depth chart found for team_id={team_id}. Call initialize_depth_chart first."
         chart["active_roster_ids"] = active_roster_ids
+        chart["active_roster"] = active_roster
         chart["generated_at"] = _now()
         _write(chart)
     return f"Updated active_roster_ids for team_id={team_id} ({len(active_roster_ids)} players)"
@@ -376,6 +386,12 @@ def validate_depth_chart(team_id: int) -> str:
 
     violations = []
     active_ids = set(chart["active_roster_ids"])
+    active_roster_map: dict[str, dict] = chart.get("active_roster", {})
+
+    def _roster_info(pid: int) -> tuple[str, str]:
+        """Return (name, position) for a player_id, falling back to bare ID."""
+        info = active_roster_map.get(str(pid), {})
+        return info.get("name") or f"player_id={pid}", info.get("position", "?")
 
     # Collect all player_ids present anywhere in the chart
     charted_ids: set[int] = set()
@@ -387,15 +403,27 @@ def validate_depth_chart(team_id: int) -> str:
     for e in chart["bullpen"]:
         charted_ids.add(e["player_id"])
 
+    rotation_ids = {e["player_id"] for e in chart["rotation"]}
+    bullpen_ids = {e["player_id"] for e in chart["bullpen"]}
+
     # Rule 1: every active roster player must appear at least once
     missing = active_ids - charted_ids
     for pid in sorted(missing):
-        violations.append(f"Active roster player_id={pid} does not appear anywhere in the depth chart")
+        name, pos = _roster_info(pid)
+        violations.append(
+            f"{name} (player_id={pid}, position={pos}) is on the active roster but missing from the depth chart"
+        )
 
     # Rule 2: no player outside the active roster may appear
     extra = charted_ids - active_ids
     for pid in sorted(extra):
-        violations.append(f"player_id={pid} appears in the depth chart but is not on the active roster")
+        name = next(
+            (e["name"] for pos in VALID_POSITIONS for e in chart["positions"].get(pos, []) if e["player_id"] == pid),
+            next((e["name"] for e in chart["rotation"] + chart["bullpen"] if e["player_id"] == pid), f"player_id={pid}"),
+        )
+        violations.append(
+            f"{name} (player_id={pid}) is in the depth chart but is not on the active roster"
+        )
 
     # Rule 3: every field position must have a 1st-string entry
     for pos in VALID_POSITIONS:
@@ -407,17 +435,13 @@ def validate_depth_chart(team_id: int) -> str:
     if not (1 <= len(chart["rotation"]) <= 5):
         violations.append(f"Rotation has {len(chart['rotation'])} slots (must be 1–5)")
 
-    # Rule 5: every active-roster pitcher not in rotation must be in bullpen
-    rotation_ids = {e["player_id"] for e in chart["rotation"]}
-    bullpen_ids = {e["player_id"] for e in chart["bullpen"]}
-    position_ids = {e["player_id"] for pos in VALID_POSITIONS for e in chart["positions"].get(pos, [])}
-
-    # A player is considered a pitcher if they appear in rotation or bullpen but
-    # not exclusively in field positions
-    pitchers_in_chart = (rotation_ids | bullpen_ids) & active_ids
-    unassigned_pitchers = pitchers_in_chart - rotation_ids - bullpen_ids
-    for pid in sorted(unassigned_pitchers):
-        violations.append(f"Pitcher player_id={pid} is on the active roster but not in rotation or bullpen")
+    # Rule 5: active-roster pitchers must appear in rotation or bullpen, not just field positions
+    for pid in sorted(active_ids):
+        name, pos = _roster_info(pid)
+        if pos == "P" and pid in charted_ids and pid not in rotation_ids and pid not in bullpen_ids:
+            violations.append(
+                f"{name} (player_id={pid}) is a pitcher but only appears in field positions"
+            )
 
     return json.dumps({"valid": len(violations) == 0, "violations": violations})
 
