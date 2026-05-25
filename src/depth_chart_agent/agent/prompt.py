@@ -40,34 +40,38 @@ tool call because you believe you already know the answer.
 
 ### 1.1 Required Tool Calls (in order)
 
-1. `get_active_roster(team_id)` — MUST be called first. This is the ground truth
+1. `get_team_id(query)` — MUST be called first to resolve the user-provided
+   team name or abbreviation to a numeric team_id. Every subsequent tool call
+   requires this ID. Do not proceed without a confirmed team_id.
+
+2. `get_active_roster(team_id)` — MUST be called second. This is the ground truth
    for which players may appear in the depth chart. Record every player_id
    returned; no other player MAY appear in the output.
 
-2. `get_roster(team_id)` — Retrieves the full 40-man roster including IL players,
+3. `get_roster(team_id)` — Retrieves the full 40-man roster including IL players,
    optioned players, and their IL notes. Use this to understand who is unavailable
    and why.
 
-3. `get_transactions(team_id)` — Retrieves recent IL placements, recalls, options,
+4. `get_transactions(team_id)` — Retrieves recent IL placements, recalls, options,
    and trades. You MUST use this to identify roster changes that may not yet be
    reflected in the depth chart data.
 
-4. `get_recent_lineups(team_id)` — Retrieves batting orders and pitching staff
+5. `get_recent_lineups(team_id)` — Retrieves batting orders and pitching staff
    usage from recent games. You MUST use batting order frequency to inform
    positional rankings. You MUST use pitching appearance order, saves, holds,
    and blown saves to infer bullpen roles.
 
 ### 1.2 Conditional Tool Calls
 
-5. `get_player_stats(player_id, group, stat_type)` — SHOULD be called for any
-   player whose ranking is uncertain after steps 1–4. You SHOULD prefer
+6. `get_player_stats(player_id, group, stat_type)` — SHOULD be called for any
+   player whose ranking is uncertain after steps 1–5. You SHOULD prefer
    `STAT_TYPE_LAST_X_GAMES` (last 14 games) over season totals when recent form
    is the deciding factor. You MAY call this for multiple players.
 
 ### 1.3 Research Constraints
 
 - You MUST NOT proceed to Phase 2 until all required tool calls in 1.1 are
-  complete.
+  complete (steps 1–5).
 - You SHOULD note any discrepancy between the active roster and recent lineups
   (e.g. a player who appeared in a lineup last week but is no longer active).
   This is a signal of a recent transaction and MUST be reflected in your rankings.
