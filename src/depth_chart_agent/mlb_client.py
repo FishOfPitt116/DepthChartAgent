@@ -23,19 +23,27 @@ def _get(path: str, **params) -> dict:
         raise MLBApiError(f"Request failed: {e}") from e
 
 
-def get_roster(team_id: int) -> list[dict]:
-    """Return the 40-man roster with position and IL status for each player."""
-    data = _get(f"/teams/{team_id}/roster", rosterType="40Man")
-    roster = []
-    for entry in data.get("roster", []):
-        roster.append({
+def _parse_roster(data: dict) -> list[dict]:
+    return [
+        {
             "player_id": entry["person"]["id"],
             "name": entry["person"]["fullName"],
             "position": entry["position"]["abbreviation"],
             "status": entry["status"]["description"],
             "il_note": entry.get("note"),
-        })
-    return roster
+        }
+        for entry in data.get("roster", [])
+    ]
+
+
+def get_roster(team_id: int) -> list[dict]:
+    """Return the 40-man roster with position and IL status for each player."""
+    return _parse_roster(_get(f"/teams/{team_id}/roster", rosterType="40Man"))
+
+
+def get_active_roster(team_id: int) -> list[dict]:
+    """Return the active (26-man) roster — players available to play today."""
+    return _parse_roster(_get(f"/teams/{team_id}/roster", rosterType="active"))
 
 
 def get_transactions(team_id: int, days: int = 14) -> list[dict]:

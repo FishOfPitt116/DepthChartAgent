@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from depth_chart_agent.mlb_client import MLBApiError, get_roster, get_transactions
+from depth_chart_agent.mlb_client import MLBApiError, get_active_roster, get_roster, get_transactions
 
 
 # --- fixtures ---
@@ -97,6 +97,61 @@ def test_get_roster_network_error():
     with patch("depth_chart_agent.mlb_client.httpx.get", side_effect=httpx.ConnectError("timeout")):
         with pytest.raises(MLBApiError, match="Request failed"):
             get_roster(147)
+
+
+# --- get_active_roster ---
+
+ACTIVE_ROSTER_RESPONSE = {
+    "roster": [
+        {
+            "person": {"id": 592450, "fullName": "Aaron Judge"},
+            "position": {"abbreviation": "RF"},
+            "status": {"code": "A", "description": "Active"},
+        },
+        {
+            "person": {"id": 683011, "fullName": "Anthony Volpe"},
+            "position": {"abbreviation": "SS"},
+            "status": {"code": "A", "description": "Active"},
+        },
+    ]
+}
+
+
+def test_get_active_roster_returns_normalized_players():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(ACTIVE_ROSTER_RESPONSE)):
+        result = get_active_roster(147)
+
+    assert len(result) == 2
+    assert result[0] == {
+        "player_id": 592450,
+        "name": "Aaron Judge",
+        "position": "RF",
+        "status": "Active",
+        "il_note": None,
+    }
+
+
+def test_get_active_roster_requests_correct_roster_type():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(ACTIVE_ROSTER_RESPONSE)) as mock_get:
+        get_active_roster(147)
+
+    _, kwargs = mock_get.call_args
+    assert kwargs["params"]["rosterType"] == "active"
+
+
+def test_get_roster_requests_correct_roster_type():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(ROSTER_RESPONSE)) as mock_get:
+        get_roster(147)
+
+    _, kwargs = mock_get.call_args
+    assert kwargs["params"]["rosterType"] == "40Man"
+
+
+def test_get_active_roster_empty():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response({"roster": []})):
+        result = get_active_roster(147)
+
+    assert result == []
 
 
 # --- get_transactions ---
