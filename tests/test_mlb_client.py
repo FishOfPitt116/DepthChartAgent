@@ -5,7 +5,18 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from depth_chart_agent.mlb_client import MLBApiError, get_active_roster, get_roster, get_transactions
+from depth_chart_agent.mlb_client import (
+    MLBApiError,
+    STAT_GROUP_HITTING,
+    STAT_GROUP_PITCHING,
+    STAT_TYPE_BY_DATE_RANGE,
+    STAT_TYPE_LAST_X_GAMES,
+    STAT_TYPE_SEASON,
+    get_active_roster,
+    get_player_stats,
+    get_roster,
+    get_transactions,
+)
 
 
 # --- fixtures ---
@@ -194,3 +205,115 @@ def test_get_transactions_http_error():
     with patch("depth_chart_agent.mlb_client.httpx.get", return_value=mock):
         with pytest.raises(MLBApiError, match="HTTP 500"):
             get_transactions(147)
+
+
+# --- get_player_stats ---
+
+HITTING_STATS_RESPONSE = {
+    "stats": [{
+        "type": {"displayName": "season"},
+        "group": {"displayName": "hitting"},
+        "splits": [{
+            "stat": {
+                "gamesPlayed": 53,
+                "avg": ".250",
+                "homeRuns": 17,
+                "rbi": 32,
+                "obp": ".379",
+                "slg": ".557",
+                "ops": ".936",
+            }
+        }]
+    }]
+}
+
+PITCHING_STATS_RESPONSE = {
+    "stats": [{
+        "type": {"displayName": "season"},
+        "group": {"displayName": "pitching"},
+        "splits": [{
+            "stat": {
+                "gamesPlayed": 10,
+                "gamesStarted": 10,
+                "era": "3.12",
+                "whip": "1.10",
+                "inningsPitched": "60.1",
+                "strikeOuts": 62,
+                "wins": 4,
+                "losses": 3,
+            }
+        }]
+    }]
+}
+
+
+def test_get_player_stats_returns_hitting_stats():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(HITTING_STATS_RESPONSE)):
+        result = get_player_stats(592450, STAT_GROUP_HITTING)
+
+    assert result["player_id"] == 592450
+    assert result["group"] == STAT_GROUP_HITTING
+    assert result["stat_type"] == STAT_TYPE_SEASON
+    assert result["stats"]["avg"] == ".250"
+    assert result["stats"]["homeRuns"] == 17
+
+
+def test_get_player_stats_returns_pitching_stats():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(PITCHING_STATS_RESPONSE)):
+        result = get_player_stats(543037, STAT_GROUP_PITCHING)
+
+    assert result["group"] == STAT_GROUP_PITCHING
+    assert result["stats"]["era"] == "3.12"
+    assert result["stats"]["strikeOuts"] == 62
+
+
+def test_get_player_stats_last_x_games_passes_limit():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(HITTING_STATS_RESPONSE)) as mock_get:
+        get_player_stats(592450, STAT_GROUP_HITTING, stat_type=STAT_TYPE_LAST_X_GAMES, last_x_games=14)
+
+    _, kwargs = mock_get.call_args
+    params = kwargs["params"]
+    assert params["stats"] == STAT_TYPE_LAST_X_GAMES
+    assert params["limit"] == 14
+
+
+def test_get_player_stats_by_date_range_passes_dates():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(HITTING_STATS_RESPONSE)) as mock_get:
+        get_player_stats(
+            592450, STAT_GROUP_HITTING,
+            stat_type=STAT_TYPE_BY_DATE_RANGE,
+            start_date="2026-05-01",
+            end_date="2026-05-24",
+        )
+
+    _, kwargs = mock_get.call_args
+    params = kwargs["params"]
+    assert params["stats"] == STAT_TYPE_BY_DATE_RANGE
+    assert params["startDate"] == "2026-05-01"
+    assert params["endDate"] == "2026-05-24"
+
+
+def test_get_player_stats_no_stats_returns_none():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response({"stats": []})):
+        result = get_player_stats(592450, STAT_GROUP_HITTING)
+
+    assert result is None
+
+
+def test_get_player_stats_empty_splits_returns_none():
+    response = {"stats": [{"type": {"displayName": "season"}, "splits": []}]}
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response(response)):
+        result = get_player_stats(592450, STAT_GROUP_HITTING)
+
+    assert result is None
+
+
+def test_get_player_stats_http_error():
+    mock = MagicMock(spec=httpx.Response)
+    mock.status_code = 404
+    mock.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "Not Found", request=MagicMock(), response=mock
+    )
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=mock):
+        with pytest.raises(MLBApiError, match="HTTP 404"):
+            get_player_stats(99999, STAT_GROUP_HITTING)

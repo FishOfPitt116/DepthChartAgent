@@ -8,10 +8,27 @@ from __future__ import annotations
 
 import pytest
 
-from depth_chart_agent.mlb_client import MLBApiError, get_active_roster, get_roster, get_transactions
+from depth_chart_agent.mlb_client import (
+    MLBApiError,
+    STAT_GROUP_HITTING,
+    STAT_GROUP_PITCHING,
+    STAT_TYPE_BY_DATE_RANGE,
+    STAT_TYPE_LAST_X_GAMES,
+    STAT_TYPE_SEASON,
+    get_active_roster,
+    get_player_stats,
+    get_roster,
+    get_transactions,
+)
 
 # New York Yankees — stable, well-known team ID
 YANKEES_ID = 147
+
+# Aaron Judge — reliable hitter with a full season of data
+JUDGE_ID = 592450
+
+# Gerrit Cole — reliable pitcher with a full season of data
+COLE_ID = 543037
 
 
 @pytest.mark.integration
@@ -95,3 +112,67 @@ def test_get_transactions_returns_entries():
 def test_get_roster_invalid_team_raises_error():
     with pytest.raises(MLBApiError):
         get_roster(99999)
+
+
+# --- get_player_stats ---
+
+@pytest.mark.integration
+def test_get_player_stats_season_hitting():
+    result = get_player_stats(JUDGE_ID, STAT_GROUP_HITTING)
+
+    assert result is not None
+    assert result["player_id"] == JUDGE_ID
+    assert result["group"] == STAT_GROUP_HITTING
+    assert result["stat_type"] == STAT_TYPE_SEASON
+    stats = result["stats"]
+    assert "avg" in stats
+    assert "homeRuns" in stats
+    assert "ops" in stats
+    assert "gamesPlayed" in stats
+
+
+@pytest.mark.integration
+def test_get_player_stats_season_pitching():
+    result = get_player_stats(COLE_ID, STAT_GROUP_PITCHING)
+
+    assert result is not None
+    assert result["group"] == STAT_GROUP_PITCHING
+    stats = result["stats"]
+    assert "era" in stats
+    assert "whip" in stats
+    assert "strikeOuts" in stats
+    assert "inningsPitched" in stats
+
+
+@pytest.mark.integration
+def test_get_player_stats_last_x_games():
+    result = get_player_stats(
+        JUDGE_ID, STAT_GROUP_HITTING,
+        stat_type=STAT_TYPE_LAST_X_GAMES,
+        last_x_games=14,
+    )
+
+    assert result is not None
+    assert result["stat_type"] == STAT_TYPE_LAST_X_GAMES
+    assert result["stats"]["gamesPlayed"] <= 14
+
+
+@pytest.mark.integration
+def test_get_player_stats_by_date_range():
+    result = get_player_stats(
+        JUDGE_ID, STAT_GROUP_HITTING,
+        stat_type=STAT_TYPE_BY_DATE_RANGE,
+        start_date="2026-05-01",
+        end_date="2026-05-24",
+    )
+
+    assert result is not None
+    assert result["stat_type"] == STAT_TYPE_BY_DATE_RANGE
+    assert "avg" in result["stats"]
+
+
+@pytest.mark.integration
+def test_get_player_stats_invalid_player_returns_none():
+    result = get_player_stats(999999999, STAT_GROUP_HITTING)
+
+    assert result is None
