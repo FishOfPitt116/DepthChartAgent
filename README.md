@@ -31,3 +31,10 @@ pip install -e ".[dev]"
 ```bash
 python run_local.py
 ```
+
+## Tests
+
+```bash
+pytest                        # unit tests (no network)
+pytest -m integration         # integration tests (hit real APIs)
+```
