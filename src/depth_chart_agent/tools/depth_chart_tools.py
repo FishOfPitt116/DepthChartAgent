@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +16,17 @@ VALID_BULLPEN_ROLES = {"closer", "setup", "middle_relief", "long_relief", "mop_u
 
 
 # --- internal helpers ---
+
+_locks: dict[int, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _get_lock(team_id: int) -> threading.Lock:
+    with _locks_guard:
+        if team_id not in _locks:
+            _locks[team_id] = threading.Lock()
+        return _locks[team_id]
+
 
 def _chart_path(team_id: int) -> Path:
     return _DATA_DIR / f"{team_id}.json"
@@ -84,16 +96,17 @@ def initialize_depth_chart(team_id: int, team_name: str, active_roster_ids: list
         active_roster_ids: List of player_ids from get_active_roster. Every
             player in this list must be charted before validation will pass.
     """
-    chart = {
-        "team_id": team_id,
-        "team_name": team_name,
-        "generated_at": _now(),
-        "active_roster_ids": active_roster_ids,
-        "positions": {pos: [] for pos in VALID_POSITIONS},
-        "rotation": [],
-        "bullpen": [],
-    }
-    _write(chart)
+    with _get_lock(team_id):
+        chart = {
+            "team_id": team_id,
+            "team_name": team_name,
+            "generated_at": _now(),
+            "active_roster_ids": active_roster_ids,
+            "positions": {pos: [] for pos in VALID_POSITIONS},
+            "rotation": [],
+            "bullpen": [],
+        }
+        _write(chart)
     return f"Initialized empty depth chart for {team_name} (team_id={team_id})"
 
 
@@ -109,12 +122,13 @@ def update_active_roster_ids(team_id: int, active_roster_ids: list[int]) -> str:
         active_roster_ids: Complete list of player_ids from get_active_roster.
             Replaces the previous list entirely.
     """
-    chart = _read(team_id)
-    if chart is None:
-        return f"Error: no depth chart found for team_id={team_id}. Call initialize_depth_chart first."
-    chart["active_roster_ids"] = active_roster_ids
-    chart["generated_at"] = _now()
-    _write(chart)
+    with _get_lock(team_id):
+        chart = _read(team_id)
+        if chart is None:
+            return f"Error: no depth chart found for team_id={team_id}. Call initialize_depth_chart first."
+        chart["active_roster_ids"] = active_roster_ids
+        chart["generated_at"] = _now()
+        _write(chart)
     return f"Updated active_roster_ids for team_id={team_id} ({len(active_roster_ids)} players)"
 
 
@@ -149,15 +163,15 @@ def set_position_player(
         return f"Error: '{position}' is not a valid position."
     if depth_string not in (1, 2, 3):
         return f"Error: depth_string must be 1, 2, or 3."
-    chart = _read(team_id)
-    if chart is None:
-        return f"Error: no depth chart found for team_id={team_id}."
-
-    entries = [e for e in chart["positions"][position] if e["player_id"] != player_id]
-    entries.append({"player_id": player_id, "name": name, "depth_string": depth_string, "reasoning": reasoning})
-    entries.sort(key=lambda e: e["depth_string"])
-    chart["positions"][position] = entries
-    _write(chart)
+    with _get_lock(team_id):
+        chart = _read(team_id)
+        if chart is None:
+            return f"Error: no depth chart found for team_id={team_id}."
+        entries = [e for e in chart["positions"][position] if e["player_id"] != player_id]
+        entries.append({"player_id": player_id, "name": name, "depth_string": depth_string, "reasoning": reasoning})
+        entries.sort(key=lambda e: e["depth_string"])
+        chart["positions"][position] = entries
+        _write(chart)
     return f"Set {name} as {position} depth string {depth_string}"
 
 
@@ -175,14 +189,14 @@ def remove_position_player(team_id: int, position: str, player_id: int) -> str:
     """
     if position not in VALID_POSITIONS:
         return f"Error: '{position}' is not a valid position."
-    chart = _read(team_id)
-    if chart is None:
-        return f"Error: no depth chart found for team_id={team_id}."
-
-    before = len(chart["positions"][position])
-    chart["positions"][position] = [e for e in chart["positions"][position] if e["player_id"] != player_id]
-    _write(chart)
-    removed = before - len(chart["positions"][position])
+    with _get_lock(team_id):
+        chart = _read(team_id)
+        if chart is None:
+            return f"Error: no depth chart found for team_id={team_id}."
+        before = len(chart["positions"][position])
+        chart["positions"][position] = [e for e in chart["positions"][position] if e["player_id"] != player_id]
+        _write(chart)
+        removed = before - len(chart["positions"][position])
     return f"Removed player_id={player_id} from {position}" if removed else f"player_id={player_id} was not in {position}"
 
 
@@ -205,14 +219,14 @@ def set_rotation_slot(team_id: int, slot: str, player_id: int, name: str, reason
     """
     if slot not in VALID_ROTATION_SLOTS:
         return f"Error: '{slot}' is not a valid rotation slot. Valid: {sorted(VALID_ROTATION_SLOTS)}"
-    chart = _read(team_id)
-    if chart is None:
-        return f"Error: no depth chart found for team_id={team_id}."
-
-    chart["rotation"] = [e for e in chart["rotation"] if e["slot"] != slot]
-    chart["rotation"].append({"player_id": player_id, "name": name, "slot": slot, "reasoning": reasoning})
-    chart["rotation"].sort(key=lambda e: e["slot"])
-    _write(chart)
+    with _get_lock(team_id):
+        chart = _read(team_id)
+        if chart is None:
+            return f"Error: no depth chart found for team_id={team_id}."
+        chart["rotation"] = [e for e in chart["rotation"] if e["slot"] != slot]
+        chart["rotation"].append({"player_id": player_id, "name": name, "slot": slot, "reasoning": reasoning})
+        chart["rotation"].sort(key=lambda e: e["slot"])
+        _write(chart)
     return f"Set {name} as {slot}"
 
 
@@ -228,14 +242,14 @@ def remove_rotation_slot(team_id: int, slot: str) -> str:
     """
     if slot not in VALID_ROTATION_SLOTS:
         return f"Error: '{slot}' is not a valid rotation slot."
-    chart = _read(team_id)
-    if chart is None:
-        return f"Error: no depth chart found for team_id={team_id}."
-
-    before = len(chart["rotation"])
-    chart["rotation"] = [e for e in chart["rotation"] if e["slot"] != slot]
-    _write(chart)
-    removed = before - len(chart["rotation"])
+    with _get_lock(team_id):
+        chart = _read(team_id)
+        if chart is None:
+            return f"Error: no depth chart found for team_id={team_id}."
+        before = len(chart["rotation"])
+        chart["rotation"] = [e for e in chart["rotation"] if e["slot"] != slot]
+        _write(chart)
+        removed = before - len(chart["rotation"])
     return f"Cleared {slot}" if removed else f"{slot} was already empty"
 
 
@@ -262,13 +276,13 @@ def set_bullpen_role(team_id: int, player_id: int, name: str, role: str, reasoni
     """
     if role not in VALID_BULLPEN_ROLES:
         return f"Error: '{role}' is not a valid bullpen role. Valid: {sorted(VALID_BULLPEN_ROLES)}"
-    chart = _read(team_id)
-    if chart is None:
-        return f"Error: no depth chart found for team_id={team_id}."
-
-    chart["bullpen"] = [e for e in chart["bullpen"] if e["player_id"] != player_id]
-    chart["bullpen"].append({"player_id": player_id, "name": name, "role": role, "reasoning": reasoning})
-    _write(chart)
+    with _get_lock(team_id):
+        chart = _read(team_id)
+        if chart is None:
+            return f"Error: no depth chart found for team_id={team_id}."
+        chart["bullpen"] = [e for e in chart["bullpen"] if e["player_id"] != player_id]
+        chart["bullpen"].append({"player_id": player_id, "name": name, "role": role, "reasoning": reasoning})
+        _write(chart)
     return f"Set {name} as {role}"
 
 
@@ -281,14 +295,14 @@ def remove_bullpen_player(team_id: int, player_id: int) -> str:
         team_id: MLB team ID.
         player_id: MLB player ID to remove from the bullpen.
     """
-    chart = _read(team_id)
-    if chart is None:
-        return f"Error: no depth chart found for team_id={team_id}."
-
-    before = len(chart["bullpen"])
-    chart["bullpen"] = [e for e in chart["bullpen"] if e["player_id"] != player_id]
-    _write(chart)
-    removed = before - len(chart["bullpen"])
+    with _get_lock(team_id):
+        chart = _read(team_id)
+        if chart is None:
+            return f"Error: no depth chart found for team_id={team_id}."
+        before = len(chart["bullpen"])
+        chart["bullpen"] = [e for e in chart["bullpen"] if e["player_id"] != player_id]
+        _write(chart)
+        removed = before - len(chart["bullpen"])
     return f"Removed player_id={player_id} from bullpen" if removed else f"player_id={player_id} was not in bullpen"
 
 
@@ -304,28 +318,29 @@ def remove_player_everywhere(team_id: int, player_id: int) -> str:
         team_id: MLB team ID.
         player_id: MLB player ID to remove from the entire depth chart.
     """
-    chart = _read(team_id)
-    if chart is None:
-        return f"Error: no depth chart found for team_id={team_id}."
+    with _get_lock(team_id):
+        chart = _read(team_id)
+        if chart is None:
+            return f"Error: no depth chart found for team_id={team_id}."
 
-    removed_from = []
-    for pos in VALID_POSITIONS:
-        before = len(chart["positions"][pos])
-        chart["positions"][pos] = [e for e in chart["positions"][pos] if e["player_id"] != player_id]
-        if len(chart["positions"][pos]) < before:
-            removed_from.append(pos)
+        removed_from = []
+        for pos in VALID_POSITIONS:
+            before = len(chart["positions"][pos])
+            chart["positions"][pos] = [e for e in chart["positions"][pos] if e["player_id"] != player_id]
+            if len(chart["positions"][pos]) < before:
+                removed_from.append(pos)
 
-    before = len(chart["rotation"])
-    chart["rotation"] = [e for e in chart["rotation"] if e["player_id"] != player_id]
-    if len(chart["rotation"]) < before:
-        removed_from.append("rotation")
+        before = len(chart["rotation"])
+        chart["rotation"] = [e for e in chart["rotation"] if e["player_id"] != player_id]
+        if len(chart["rotation"]) < before:
+            removed_from.append("rotation")
 
-    before = len(chart["bullpen"])
-    chart["bullpen"] = [e for e in chart["bullpen"] if e["player_id"] != player_id]
-    if len(chart["bullpen"]) < before:
-        removed_from.append("bullpen")
+        before = len(chart["bullpen"])
+        chart["bullpen"] = [e for e in chart["bullpen"] if e["player_id"] != player_id]
+        if len(chart["bullpen"]) < before:
+            removed_from.append("bullpen")
 
-    _write(chart)
+        _write(chart)
     if removed_from:
         return f"Removed player_id={player_id} from: {', '.join(removed_from)}"
     return f"player_id={player_id} was not found anywhere in the depth chart"
