@@ -14,19 +14,29 @@ DepthChartAgent/
 ├── src/
 │   └── depth_chart_agent/
 │       ├── mlb_client.py        # MLB Stats API client (unauthenticated)
+│       ├── storage.py           # Shared chart file I/O (read/write, atomic)
+│       ├── logging_config.py    # Shared logging setup (file + console)
 │       ├── agent/
 │       │   ├── orchestrator.py  # Agent definition (model, tools, hooks)
 │       │   ├── prompt.py        # System prompt / SOP
-│       │   └── hooks.py         # Logging, cost tracking, audit trail
+│       │   └── hooks.py         # Per-LLM-call cost tracking, audit trail
+│       ├── api/
+│       │   ├── app.py           # FastAPI app and routes
+│       │   ├── auth.py          # API key authentication
+│       │   ├── models.py        # Pydantic response models
+│       │   └── refresh.py       # Redis-backed refresh job manager
 │       └── tools/
 │           ├── mlb_tools.py     # Read-only MLB API tools (roster, lineups, stats)
 │           └── depth_chart_tools.py  # Read/write depth chart tools
 ├── tests/
 ├── data/                        # Generated depth charts (JSON, per team)
-├── logs/                        # Audit log (JSONL, one entry per event)
+├── logs/
+│   ├── app.log                  # API and agent lifecycle events (rotating)
+│   └── audit.jsonl              # Structured agent tool I/O and LLM calls
 ├── pyproject.toml
 ├── README.md
-└── run_local.py                 # CLI entry point
+├── run_local.py                 # CLI entry point
+└── run_api.py                   # API server entry point
 ```
 
 ## Setup
@@ -37,28 +47,94 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-Set your OpenAI API key:
+Create a `.env` file in the project root:
 
-```bash
-export OPENAI_API_KEY=sk-...
+```
+OPENAI_API_KEY=sk-...
+
+# Optional overrides
+OPENAI_MODEL=gpt-5-mini
+DEPTH_CHART_API_KEY=<secret>    # required for force-refresh endpoint
+REDIS_URL=redis://localhost:6379
+CACHE_TTL_SECONDS=86400
+LOG_LEVEL=INFO
 ```
 
-Optionally override the model (defaults to `gpt-5-mini`):
+Generate a value for `DEPTH_CHART_API_KEY`:
 
 ```bash
-export OPENAI_MODEL=gpt-5-mini
+python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
 ## Run
+
+### CLI
 
 ```bash
 python run_local.py
 ```
 
-The script prompts for a team name and runs the full Research → Write →
-Validation cycle, printing per-LLM-call token usage and cost to stdout.
-Completed depth charts are saved to `data/<team_id>.json`. All tool inputs
-and outputs are appended to `logs/audit.jsonl`.
+Prompts for a team name and runs the full Research → Write → Validation cycle,
+printing per-LLM-call token usage and cost to stdout. Completed depth charts
+are saved to `data/<team_id>.json`.
+
+### API server
+
+Requires Redis:
+
+```bash
+brew install redis && brew services start redis   # macOS
+```
+
+Then:
+
+```bash
+python run_api.py
+```
+
+The server starts on `http://localhost:8000`. Interactive API docs are available
+at `http://localhost:8000/docs`.
+
+## API
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/depth-chart/{team}` | None | Returns chart; triggers background refresh if stale |
+| `GET` | `/refresh/{refresh_id}` | None | Poll refresh job status |
+| `POST` | `/depth-chart/{team}/refresh` | API key | Force refresh regardless of TTL |
+
+`{team}` accepts a full name, city, or abbreviation (e.g. `angels`, `BOS`, `red%20sox`).
+
+**Cache behaviour** — `cache_status` in the response indicates freshness:
+
+| Value | Meaning |
+|-------|---------|
+| `fresh` | Chart is within TTL; no refresh in progress |
+| `stale` | Chart is expired; background refresh just triggered |
+| `refreshing` | Chart is expired; refresh already in progress |
+| `initializing` | No chart exists yet; refresh triggered |
+
+When a refresh is triggered the response includes a `refresh` object with a
+`refresh_id`. Poll `GET /refresh/{refresh_id}` to track progress; the response
+includes the completed chart once the job finishes.
+
+## Logging
+
+Two log outputs are written on every run:
+
+**`logs/app.log`** — human-readable API and agent lifecycle events, written by
+Python's `logging` module. Rotates at 10 MB (5 backups). Level controlled by
+`LOG_LEVEL` env var (default `INFO`). Covers:
+- Server start/shutdown
+- Every request: team, resolved team_id, cache_status, refresh_id
+- Refresh job state transitions: `pending → running → complete / failed`
+- Agent run start, completion, and errors
+- Auth failures and team-not-found warnings
+
+**`logs/audit.jsonl`** — structured JSON, one entry per line. Written by the
+agent hooks. Covers every LLM call (token counts, cost), every tool input and
+output, and all agent reasoning blocks. Useful for debugging agent behaviour
+and replaying runs.
 
 ## How it works
 
@@ -113,5 +189,5 @@ pytest                        # unit tests (no network)
 pytest -m integration         # integration tests (hit real APIs)
 ```
 
-Unit tests mock the MLB API and redirect file I/O to a temp directory, so
-they run fully offline.
+Unit tests mock the MLB API, Redis, and redirect file I/O to a temp directory,
+so they run fully offline.

@@ -35,7 +35,7 @@ _ROSTER_DICTS = [{"player_id": pid} for pid in ROSTER]
 @pytest.fixture(autouse=True)
 def patch_data_dir(tmp_path):
     """Redirect all file I/O to a temporary directory."""
-    with patch("depth_chart_agent.tools.depth_chart_tools._DATA_DIR", tmp_path):
+    with patch("depth_chart_agent.storage.DATA_DIR", tmp_path):
         yield tmp_path
 
 
