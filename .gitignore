@@ -20,6 +20,9 @@ dist/
 # Output artifacts from run_local.py
 outputs/
 
+# Depth chart data store
+data/depth_charts/
+
 # IDE
 .vscode/
 .idea/
