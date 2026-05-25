@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agents import function_tool
+from pydantic import BaseModel
 
 from depth_chart_agent.mlb_client import get_active_roster
 
@@ -15,6 +16,28 @@ _DATA_DIR = Path(__file__).parent.parent.parent.parent / "data" / "depth_charts"
 VALID_POSITIONS = {"C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"}
 VALID_ROTATION_SLOTS = {"SP1", "SP2", "SP3", "SP4", "SP5"}
 VALID_BULLPEN_ROLES = {"closer", "setup", "middle_relief", "long_relief", "mop_up"}
+
+
+# --- entry models (used as list elements in batch write tools) ---
+
+class PositionEntry(BaseModel):
+    position: str
+    player_id: int
+    name: str
+    depth_string: int
+    reasoning: str
+
+class RotationEntry(BaseModel):
+    slot: str
+    player_id: int
+    name: str
+    reasoning: str
+
+class BullpenEntry(BaseModel):
+    player_id: int
+    name: str
+    role: str
+    reasoning: str
 
 
 # --- internal helpers ---
@@ -147,46 +170,41 @@ def update_active_roster_ids(team_id: int) -> str:
 
 # --- position tools ---
 
-def set_position_player(
-    team_id: int,
-    position: str,
-    player_id: int,
-    name: str,
-    depth_string: int,
-    reasoning: str,
-) -> str:
+def set_position_players(team_id: int, entries: list[PositionEntry]) -> str:
     """
-    Add or update a player at a field position. If the player already exists
-    at this position their entry is replaced; other players at the position
-    are unaffected.
+    Add or update one or more players at field positions in a single call.
+    Pass a list with one entry for a targeted update or many entries to batch
+    the entire position write in one round trip. Existing entries for a player
+    at a position are replaced; other players at that position are unaffected.
 
     Args:
         team_id: MLB team ID.
-        position: Field position. Must be one of: C, 1B, 2B, 3B, SS, LF,
-            CF, RF, DH.
-        player_id: MLB player ID from the active roster.
-        name: Player's full name (e.g. "Aaron Judge").
-        depth_string: Ranking at this position. 1 = starter (required for
-            every position), 2 = first backup, 3 = second backup.
-        reasoning: Actual numbers observed in tool output justifying this
-            ranking — not estimates or examples from the prompt. Cite the
-            observed start count at this position and any relevant stat
-            (e.g. "Started [N] of last [M] games in [POS]; [stat] last [M] games").
+        entries: List of position assignments. Each entry requires:
+            position: Must be one of: C, 1B, 2B, 3B, SS, LF, CF, RF, DH.
+            player_id: MLB player ID from the active roster.
+            name: Player's full name.
+            depth_string: 1 = starter, 2 = first backup, 3 = second backup.
+            reasoning: Actual numbers observed in tool output — not estimates.
+                Cite start count at this position and any relevant stat
+                (e.g. "Started [N] of last [M] games in [POS]; [stat] last [M] games").
     """
-    if position not in VALID_POSITIONS:
-        return f"Error: '{position}' is not a valid position."
-    if depth_string not in (1, 2, 3):
-        return f"Error: depth_string must be 1, 2, or 3."
+    for e in entries:
+        if e.position not in VALID_POSITIONS:
+            return f"Error: '{e.position}' is not a valid position."
+        if e.depth_string not in (1, 2, 3):
+            return f"Error: depth_string must be 1, 2, or 3 (got {e.depth_string} for {e.name})."
     with _get_lock(team_id):
         chart = _read(team_id)
         if chart is None:
             return f"Error: no depth chart found for team_id={team_id}."
-        entries = [e for e in chart["positions"][position] if e["player_id"] != player_id]
-        entries.append({"player_id": player_id, "name": name, "depth_string": depth_string, "reasoning": reasoning})
-        entries.sort(key=lambda e: e["depth_string"])
-        chart["positions"][position] = entries
+        for e in entries:
+            existing = [x for x in chart["positions"][e.position] if x["player_id"] != e.player_id]
+            existing.append({"player_id": e.player_id, "name": e.name, "depth_string": e.depth_string, "reasoning": e.reasoning})
+            existing.sort(key=lambda x: x["depth_string"])
+            chart["positions"][e.position] = existing
         _write(chart)
-    return f"Set {name} as {position} depth string {depth_string}"
+    lines = [f"{e.name} → {e.position} depth string {e.depth_string}" for e in entries]
+    return f"Set {len(entries)} position player(s): " + "; ".join(lines)
 
 
 def remove_position_player(team_id: int, position: str, player_id: int) -> str:
@@ -216,32 +234,37 @@ def remove_position_player(team_id: int, position: str, player_id: int) -> str:
 
 # --- rotation tools ---
 
-def set_rotation_slot(team_id: int, slot: str, player_id: int, name: str, reasoning: str) -> str:
+def set_rotation_slots(team_id: int, entries: list[RotationEntry]) -> str:
     """
-    Assign a pitcher to a rotation slot. Replaces any existing assignment at
-    that slot; the displaced pitcher is removed from the rotation entirely.
+    Assign one or more pitchers to rotation slots in a single call. Pass a
+    list with one entry for a targeted update or all starters at once to batch
+    the entire rotation write in one round trip. Replaces any existing
+    assignment at each slot.
 
     Args:
         team_id: MLB team ID.
-        slot: Rotation position. Must be one of: SP1, SP2, SP3, SP4, SP5.
-            SP1 is the ace, SP5 is the fifth starter.
-        player_id: MLB player ID from the active roster.
-        name: Pitcher's full name.
-        reasoning: Actual numbers from your Phase 1.2 pitcher analysis — not
-            estimates. Cite the observed start count and computed average
-            IP/start (e.g. "Started [N] of last [M] games; avg [X.Y] IP/start").
+        entries: List of rotation assignments. Each entry requires:
+            slot: Must be one of: SP1, SP2, SP3, SP4, SP5. SP1 is the ace.
+            player_id: MLB player ID from the active roster.
+            name: Pitcher's full name.
+            reasoning: Actual numbers from Phase 1.2 pitcher analysis — not
+                estimates. Cite observed start count and avg IP/start
+                (e.g. "Started [N] of last [M] games; avg [X.Y] IP/start").
     """
-    if slot not in VALID_ROTATION_SLOTS:
-        return f"Error: '{slot}' is not a valid rotation slot. Valid: {sorted(VALID_ROTATION_SLOTS)}"
+    for e in entries:
+        if e.slot not in VALID_ROTATION_SLOTS:
+            return f"Error: '{e.slot}' is not a valid rotation slot. Valid: {sorted(VALID_ROTATION_SLOTS)}"
     with _get_lock(team_id):
         chart = _read(team_id)
         if chart is None:
             return f"Error: no depth chart found for team_id={team_id}."
-        chart["rotation"] = [e for e in chart["rotation"] if e["slot"] != slot]
-        chart["rotation"].append({"player_id": player_id, "name": name, "slot": slot, "reasoning": reasoning})
-        chart["rotation"].sort(key=lambda e: e["slot"])
+        for e in entries:
+            chart["rotation"] = [x for x in chart["rotation"] if x["slot"] != e.slot]
+            chart["rotation"].append({"player_id": e.player_id, "name": e.name, "slot": e.slot, "reasoning": e.reasoning})
+        chart["rotation"].sort(key=lambda x: x["slot"])
         _write(chart)
-    return f"Set {name} as {slot}"
+    lines = [f"{e.name} → {e.slot}" for e in entries]
+    return f"Set {len(entries)} rotation slot(s): " + "; ".join(lines)
 
 
 def remove_rotation_slot(team_id: int, slot: str) -> str:
@@ -269,37 +292,41 @@ def remove_rotation_slot(team_id: int, slot: str) -> str:
 
 # --- bullpen tools ---
 
-def set_bullpen_role(team_id: int, player_id: int, name: str, role: str, reasoning: str) -> str:
+def set_bullpen_roles(team_id: int, entries: list[BullpenEntry]) -> str:
     """
-    Add or update a pitcher's bullpen role. If the pitcher already has a
-    bullpen entry it is replaced with the new role.
+    Add or update one or more pitchers' bullpen roles in a single call. Pass
+    a list with one entry for a targeted update or all relievers at once to
+    batch the entire bullpen write in one round trip. Existing entries for a
+    pitcher are replaced with the new role.
 
     Args:
         team_id: MLB team ID.
-        player_id: MLB player ID from the active roster.
-        name: Pitcher's full name.
-        role: Bullpen role. Must be one of:
-            - closer: records saves; typically enters with a lead in the 9th.
-            - setup: records holds; typically enters in the 7th or 8th.
-            - middle_relief: multi-inning or situational middle innings work.
-            - long_relief: routinely pitches 2+ innings, often after a short start.
-            - mop_up: enters in blowouts; lowest-leverage appearances.
-        reasoning: Actual numbers from your Phase 1.2 pitcher analysis — not
-            estimates. Cite the observed appearance count and the role-defining
-            stat (saves/blown saves for closer, holds for setup, IP per
-            appearance for long/mop-up)
-            (e.g. "[N] saves, [N] blown saves last [M] days; entered [Nth] inning in [N] of [M] appearances").
+        entries: List of bullpen assignments. Each entry requires:
+            player_id: MLB player ID from the active roster.
+            name: Pitcher's full name.
+            role: Must be one of:
+                closer — records saves; enters with a lead in the 9th.
+                setup — records holds; enters in the 7th or 8th.
+                middle_relief — situational middle innings, 1–2 IP.
+                long_relief — 3+ IP; often follows a short start or opener.
+                mop_up — enters in blowouts; lowest-leverage appearances.
+            reasoning: Actual numbers from Phase 1.2 pitcher analysis — not
+                estimates. Cite appearance count and role-defining stat
+                (e.g. "[N] saves, [N] blown saves; entered 9th in [N] of [M] appearances").
     """
-    if role not in VALID_BULLPEN_ROLES:
-        return f"Error: '{role}' is not a valid bullpen role. Valid: {sorted(VALID_BULLPEN_ROLES)}"
+    for e in entries:
+        if e.role not in VALID_BULLPEN_ROLES:
+            return f"Error: '{e.role}' is not a valid bullpen role. Valid: {sorted(VALID_BULLPEN_ROLES)}"
     with _get_lock(team_id):
         chart = _read(team_id)
         if chart is None:
             return f"Error: no depth chart found for team_id={team_id}."
-        chart["bullpen"] = [e for e in chart["bullpen"] if e["player_id"] != player_id]
-        chart["bullpen"].append({"player_id": player_id, "name": name, "role": role, "reasoning": reasoning})
+        for e in entries:
+            chart["bullpen"] = [x for x in chart["bullpen"] if x["player_id"] != e.player_id]
+            chart["bullpen"].append({"player_id": e.player_id, "name": e.name, "role": e.role, "reasoning": e.reasoning})
         _write(chart)
-    return f"Set {name} as {role}"
+    lines = [f"{e.name} → {e.role}" for e in entries]
+    return f"Set {len(entries)} bullpen role(s): " + "; ".join(lines)
 
 
 def remove_bullpen_player(team_id: int, player_id: int) -> str:
@@ -458,11 +485,11 @@ DEPTH_CHART_TOOLS = [
     function_tool(get_depth_at_position),
     function_tool(initialize_depth_chart),
     function_tool(update_active_roster_ids),
-    function_tool(set_position_player),
+    function_tool(set_position_players),
     function_tool(remove_position_player),
-    function_tool(set_rotation_slot),
+    function_tool(set_rotation_slots),
     function_tool(remove_rotation_slot),
-    function_tool(set_bullpen_role),
+    function_tool(set_bullpen_roles),
     function_tool(remove_bullpen_player),
     function_tool(remove_player_everywhere),
     function_tool(validate_depth_chart),

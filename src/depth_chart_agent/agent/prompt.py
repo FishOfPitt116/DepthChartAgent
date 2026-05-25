@@ -122,10 +122,10 @@ Call `read_depth_chart(team_id)` first.
 
 - **Inspect**: `get_depth_at_position` — use during updates to see what is
   currently assigned at a position before deciding what to change.
-- **Positions**: `set_position_player`, `remove_position_player`,
+- **Positions**: `set_position_players`, `remove_position_player`,
   `remove_player_everywhere`
-- **Rotation**: `set_rotation_slot`, `remove_rotation_slot`
-- **Bullpen**: `set_bullpen_role`, `remove_bullpen_player`
+- **Rotation**: `set_rotation_slots`, `remove_rotation_slot`
+- **Bullpen**: `set_bullpen_roles`, `remove_bullpen_player`
 
 See each tool's description for valid parameter values.
 
