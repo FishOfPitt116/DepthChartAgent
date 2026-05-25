@@ -30,12 +30,17 @@ class DepthChartAgentHooks(AgentHooks):
             f"in={u.input_tokens} out={u.output_tokens} "
             f"(${cost:.5f})"
         )
+        for item in response.output:
+            if hasattr(item, "content"):
+                for block in item.content:
+                    if hasattr(block, "text") and block.text.strip():
+                        print(f"[reasoning] {block.text.strip()}")
 
     async def on_tool_start(self, context: RunContextWrapper, agent: Any, tool: Any) -> None:
         print(f"[tool]  → {tool.name}")
 
     async def on_tool_end(self, context: RunContextWrapper, agent: Any, tool: Any, result: str) -> None:
-        preview = result[:120].replace("\n", " ")
+        preview = str(result)[:120].replace("\n", " ")
         print(f"[tool]  ← {tool.name}: {preview}")
 
     async def on_end(self, context: AgentHookContext, agent: Any, output: Any) -> None:
