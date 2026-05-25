@@ -7,6 +7,8 @@ from pathlib import Path
 
 from agents import function_tool
 
+from depth_chart_agent.mlb_client import get_active_roster
+
 # Project root / data / depth_charts
 _DATA_DIR = Path(__file__).parent.parent.parent.parent / "data" / "depth_charts"
 
@@ -84,18 +86,19 @@ def get_depth_at_position(team_id: int, position: str) -> str:
 
 # --- initialize / roster tools ---
 
-def initialize_depth_chart(team_id: int, team_name: str, active_roster_ids: list[int]) -> str:
+def initialize_depth_chart(team_id: int, team_name: str) -> str:
     """
     Create a fresh, empty depth chart for a team. MUST only be called when
     read_depth_chart returns null — calling this on an existing chart will
-    wipe all current entries.
+    wipe all current entries. Fetches the current active roster automatically;
+    do not pass roster IDs separately.
 
     Args:
         team_id: MLB team ID.
         team_name: Full team name (e.g. "New York Yankees").
-        active_roster_ids: List of player_ids from get_active_roster. Every
-            player in this list must be charted before validation will pass.
     """
+    roster = get_active_roster(team_id)
+    active_roster_ids = [p["player_id"] for p in roster]
     with _get_lock(team_id):
         chart = {
             "team_id": team_id,
@@ -110,18 +113,18 @@ def initialize_depth_chart(team_id: int, team_name: str, active_roster_ids: list
     return f"Initialized empty depth chart for {team_name} (team_id={team_id})"
 
 
-def update_active_roster_ids(team_id: int, active_roster_ids: list[int]) -> str:
+def update_active_roster_ids(team_id: int) -> str:
     """
-    Replace the stored active_roster_ids on an existing chart without touching
-    positions, rotation, or bullpen. MUST be called at the start of every
-    update run after fetching the latest active roster, so that validation
-    reflects the current 26-man roster.
+    Re-fetch the current active roster and replace the stored active_roster_ids
+    on an existing chart without touching positions, rotation, or bullpen. MUST
+    be called at the start of every update run so that validation reflects the
+    current 26-man roster. Do not pass roster IDs — they are fetched automatically.
 
     Args:
         team_id: MLB team ID.
-        active_roster_ids: Complete list of player_ids from get_active_roster.
-            Replaces the previous list entirely.
     """
+    roster = get_active_roster(team_id)
+    active_roster_ids = [p["player_id"] for p in roster]
     with _get_lock(team_id):
         chart = _read(team_id)
         if chart is None:

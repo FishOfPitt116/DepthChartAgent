@@ -90,10 +90,13 @@ tools below — there is no single "write all" call.
 
 Call `read_depth_chart(team_id)` first.
 
-- If it returns `null`: call `initialize_depth_chart` before any other write.
-- If it returns an existing chart: call `update_active_roster_ids` to sync
-  the roster, then use the targeted set/remove tools to apply only the
-  changes your Phase 1 research identified.
+- If it returns `null`: call `initialize_depth_chart(team_id, team_name)` before
+  any other write. It fetches the active roster automatically — do NOT pass
+  roster IDs.
+- If it returns an existing chart: call `update_active_roster_ids(team_id)` to
+  sync the roster. It also fetches the active roster automatically — do NOT pass
+  roster IDs. Then use the targeted set/remove tools to apply only the changes
+  your Phase 1 research identified.
 
 ### 2.2 Write Tools
 
