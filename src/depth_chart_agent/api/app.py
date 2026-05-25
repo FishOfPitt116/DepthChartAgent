@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from agents import Runner
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 
-from depth_chart_agent.agent.orchestrator import depth_chart_agent
+from depth_chart_agent.agent.orchestrator import make_agent
 from depth_chart_agent.api.auth import require_api_key
 from depth_chart_agent.api.models import DepthChartResponse, RefreshInfo, RefreshStatusResponse
 from depth_chart_agent.api.refresh import RefreshManager
@@ -83,7 +83,7 @@ async def _run_agent(team_id: int, team_name: str, refresh_id: str) -> None:
     logger.info("agent run started refresh_id=%s team_id=%s team=%s", refresh_id, team_id, team_name)
     try:
         messages = [{"role": "user", "content": team_name}]
-        await Runner.run(depth_chart_agent, messages, max_turns=50)
+        await Runner.run(make_agent(run_id=refresh_id), messages, max_turns=50)
         await _refresh.update_status(refresh_id, "complete")
         logger.info("agent run complete refresh_id=%s team_id=%s", refresh_id, team_id)
     except Exception as e:

@@ -1,3 +1,3 @@
-from .orchestrator import depth_chart_agent
+from .orchestrator import make_agent
 
-__all__ = ["depth_chart_agent"]
+__all__ = ["make_agent"]
