@@ -14,6 +14,7 @@ from depth_chart_agent.mlb_client import (
     STAT_TYPE_SEASON,
     get_active_roster,
     get_player_stats,
+    get_recent_lineups,
     get_roster,
     get_transactions,
 )
@@ -317,3 +318,126 @@ def test_get_player_stats_http_error():
     with patch("depth_chart_agent.mlb_client.httpx.get", return_value=mock):
         with pytest.raises(MLBApiError, match="HTTP 404"):
             get_player_stats(99999, STAT_GROUP_HITTING)
+
+
+# --- get_recent_lineups ---
+
+SCHEDULE_RESPONSE = {
+    "dates": [
+        {
+            "date": "2026-05-20",
+            "games": [
+                {"gamePk": 999001, "officialDate": "2026-05-20", "status": {"abstractGameState": "Final"}},
+            ],
+        },
+        {
+            "date": "2026-05-21",
+            "games": [
+                # In-progress game — should be skipped
+                {"gamePk": 999002, "officialDate": "2026-05-21", "status": {"abstractGameState": "Live"}},
+            ],
+        },
+    ]
+}
+
+BOXSCORE_RESPONSE = {
+    "teams": {
+        "away": {
+            "team": {"id": 147},
+            "battingOrder": [592450, 683011],
+            "pitchers": [543037, 670280],
+            "players": {
+                "ID592450": {"person": {"fullName": "Aaron Judge"}, "position": {"abbreviation": "RF"}},
+                "ID683011": {"person": {"fullName": "Anthony Volpe"}, "position": {"abbreviation": "SS"}},
+                "ID543037": {
+                    "person": {"fullName": "Gerrit Cole"},
+                    "position": {"abbreviation": "SP"},
+                    "stats": {"pitching": {
+                        "inningsPitched": "6.0", "saves": 0, "saveOpportunities": 0,
+                        "holds": 0, "blownSaves": 0, "gamesFinished": 0,
+                        "inheritedRunners": 0, "inheritedRunnersScored": 0,
+                    }},
+                },
+                "ID670280": {
+                    "person": {"fullName": "David Bednar"},
+                    "position": {"abbreviation": "CP"},
+                    "stats": {"pitching": {
+                        "inningsPitched": "1.0", "saves": 1, "saveOpportunities": 1,
+                        "holds": 0, "blownSaves": 0, "gamesFinished": 1,
+                        "inheritedRunners": 0, "inheritedRunnersScored": 0,
+                        "note": "(S, 5)",
+                    }},
+                },
+            },
+        },
+        "home": {
+            "team": {"id": 121},
+            "battingOrder": [],
+            "pitchers": [],
+            "players": {},
+        },
+    }
+}
+
+
+def test_get_recent_lineups_returns_completed_games_only():
+    responses = [_mock_response(SCHEDULE_RESPONSE), _mock_response(BOXSCORE_RESPONSE)]
+    with patch("depth_chart_agent.mlb_client.httpx.get", side_effect=responses):
+        result = get_recent_lineups(147)
+
+    # Only the Final game should be included, not the Live one
+    assert len(result) == 1
+    assert result[0]["date"] == "2026-05-20"
+    assert result[0]["game_id"] == 999001
+
+
+def test_get_recent_lineups_batting_order():
+    responses = [_mock_response(SCHEDULE_RESPONSE), _mock_response(BOXSCORE_RESPONSE)]
+    with patch("depth_chart_agent.mlb_client.httpx.get", side_effect=responses):
+        result = get_recent_lineups(147)
+
+    order = result[0]["batting_order"]
+    assert len(order) == 2
+    assert order[0] == {"player_id": 592450, "name": "Aaron Judge", "position": "RF"}
+    assert order[1] == {"player_id": 683011, "name": "Anthony Volpe", "position": "SS"}
+
+
+def test_get_recent_lineups_pitching_staff():
+    responses = [_mock_response(SCHEDULE_RESPONSE), _mock_response(BOXSCORE_RESPONSE)]
+    with patch("depth_chart_agent.mlb_client.httpx.get", side_effect=responses):
+        result = get_recent_lineups(147)
+
+    staff = result[0]["pitching_staff"]
+    assert len(staff) == 2
+
+    starter = staff[0]
+    assert starter["player_id"] == 543037
+    assert starter["name"] == "Gerrit Cole"
+    assert starter["appearance_order"] == 1
+    assert starter["innings_pitched"] == "6.0"
+    assert starter["saves"] == 0
+
+    closer = staff[1]
+    assert closer["player_id"] == 670280
+    assert closer["name"] == "David Bednar"
+    assert closer["appearance_order"] == 2
+    assert closer["saves"] == 1
+    assert closer["games_finished"] == 1
+    assert closer["note"] == "(S, 5)"
+
+
+def test_get_recent_lineups_correct_team_side():
+    # Same boxscore but query from home team's perspective
+    responses = [_mock_response(SCHEDULE_RESPONSE), _mock_response(BOXSCORE_RESPONSE)]
+    with patch("depth_chart_agent.mlb_client.httpx.get", side_effect=responses):
+        result = get_recent_lineups(121)  # Mets (home team)
+
+    # Home team has empty battingOrder so should yield no lineups
+    assert len(result) == 0
+
+
+def test_get_recent_lineups_no_games_returns_empty():
+    with patch("depth_chart_agent.mlb_client.httpx.get", return_value=_mock_response({"dates": []})):
+        result = get_recent_lineups(147)
+
+    assert result == []

@@ -112,6 +112,89 @@ def get_player_stats(
     }
 
 
+def _parse_boxscore_lineup(boxscore: dict, team_id: int) -> dict | None:
+    """Extract batting order and full pitching staff for team_id from a boxscore."""
+    teams = boxscore.get("teams", {})
+
+    side = None
+    for s in ("home", "away"):
+        if teams.get(s, {}).get("team", {}).get("id") == team_id:
+            side = s
+            break
+    if side is None:
+        return None
+
+    team_data = teams[side]
+    players = team_data.get("players", {})
+    batting_order = team_data.get("battingOrder", [])
+    pitcher_ids = team_data.get("pitchers", [])
+
+    if not batting_order:
+        return None
+
+    lineup = []
+    for pid in batting_order:
+        player = players.get(f"ID{pid}", {})
+        lineup.append({
+            "player_id": pid,
+            "name": player.get("person", {}).get("fullName", "Unknown"),
+            "position": player.get("position", {}).get("abbreviation", ""),
+        })
+
+    pitching_staff = []
+    for order, pid in enumerate(pitcher_ids, start=1):
+        player = players.get(f"ID{pid}", {})
+        stats = player.get("stats", {}).get("pitching", {})
+        pitching_staff.append({
+            "player_id": pid,
+            "name": player.get("person", {}).get("fullName", "Unknown"),
+            "appearance_order": order,
+            "innings_pitched": stats.get("inningsPitched", "0.0"),
+            "saves": stats.get("saves", 0),
+            "save_opportunities": stats.get("saveOpportunities", 0),
+            "holds": stats.get("holds", 0),
+            "blown_saves": stats.get("blownSaves", 0),
+            "games_finished": stats.get("gamesFinished", 0),
+            "inherited_runners": stats.get("inheritedRunners", 0),
+            "inherited_runners_scored": stats.get("inheritedRunnersScored", 0),
+            "note": stats.get("note"),
+        })
+
+    return {"batting_order": lineup, "pitching_staff": pitching_staff}
+
+
+def get_recent_lineups(team_id: int, days: int = 14) -> list[dict]:
+    """
+    Return batting orders and starting pitchers for completed games in the
+    last `days` days. Each entry covers one game.
+    """
+    end = date.today()
+    start = end - timedelta(days=days)
+    schedule = _get(
+        "/schedule",
+        teamId=team_id,
+        startDate=start.isoformat(),
+        endDate=end.isoformat(),
+        sportId=1,
+    )
+
+    lineups = []
+    for date_entry in schedule.get("dates", []):
+        for game in date_entry.get("games", []):
+            if game.get("status", {}).get("abstractGameState") != "Final":
+                continue
+
+            game_pk = game["gamePk"]
+            game_date = game["officialDate"]
+
+            boxscore = _get(f"/game/{game_pk}/boxscore")
+            lineup = _parse_boxscore_lineup(boxscore, team_id)
+            if lineup:
+                lineups.append({"date": game_date, "game_id": game_pk, **lineup})
+
+    return lineups
+
+
 def get_transactions(team_id: int, days: int = 14) -> list[dict]:
     """Return recent transactions (IL moves, recalls, signings) for a team."""
     end = date.today()
