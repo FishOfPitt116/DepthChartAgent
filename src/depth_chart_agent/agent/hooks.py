@@ -9,9 +9,9 @@ from typing import Any
 from agents import AgentHookContext, AgentHooks, RunContextWrapper
 from agents.items import ModelResponse
 
-# GPT-4o-mini pricing (per 1M tokens)
-_INPUT_COST_PER_M = 0.150
-_OUTPUT_COST_PER_M = 0.600
+# GPT-5-mini pricing (per 1M tokens)
+_INPUT_COST_PER_M = 0.250
+_OUTPUT_COST_PER_M = 2.000
 
 _LOG_DIR = Path(__file__).parent.parent.parent.parent / "logs"
 
@@ -61,7 +61,7 @@ class DepthChartAgentHooks(AgentHooks):
                     "tool": item.name,
                     "arguments": args,
                 })
-            if hasattr(item, "content"):
+            if hasattr(item, "content") and item.content:
                 for block in item.content:
                     if hasattr(block, "text") and block.text.strip():
                         print(f"[reasoning] {block.text.strip()}")
