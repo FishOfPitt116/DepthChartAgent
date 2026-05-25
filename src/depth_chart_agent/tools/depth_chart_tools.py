@@ -3,15 +3,12 @@ from __future__ import annotations
 import json
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
 
 from agents import function_tool
 from pydantic import BaseModel
 
 from depth_chart_agent.mlb_client import get_active_roster
-
-# Project root / data / depth_charts
-_DATA_DIR = Path(__file__).parent.parent.parent.parent / "data" / "depth_charts"
+from depth_chart_agent.storage import read_chart as _read, write_chart as _write
 
 VALID_POSITIONS = {"C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"}
 VALID_ROTATION_SLOTS = {"SP1", "SP2", "SP3", "SP4", "SP5"}
@@ -51,22 +48,6 @@ def _get_lock(team_id: int) -> threading.Lock:
         if team_id not in _locks:
             _locks[team_id] = threading.Lock()
         return _locks[team_id]
-
-
-def _chart_path(team_id: int) -> Path:
-    return _DATA_DIR / f"{team_id}.json"
-
-
-def _read(team_id: int) -> dict | None:
-    path = _chart_path(team_id)
-    if not path.exists():
-        return None
-    return json.loads(path.read_text())
-
-
-def _write(chart: dict) -> None:
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
-    _chart_path(chart["team_id"]).write_text(json.dumps(chart, indent=2))
 
 
 def _now() -> str:
