@@ -25,7 +25,7 @@ if __name__ == "__main__":
         first_message = " ".join(sys.argv[1:])
         print(f"You: {first_message}")
         messages.append({"role": "user", "content": first_message})
-        result = Runner.run_sync(depth_chart_agent, messages)
+        result = Runner.run_sync(depth_chart_agent, messages, max_turns=50)
         messages = result.to_input_list()
         print(f"\nAgent: {result.final_output}\n")
 
@@ -42,6 +42,6 @@ if __name__ == "__main__":
             break
 
         messages.append({"role": "user", "content": user_input})
-        result = Runner.run_sync(depth_chart_agent, messages)
+        result = Runner.run_sync(depth_chart_agent, messages, max_turns=50)
         messages = result.to_input_list()
         print(f"\nAgent: {result.final_output}\n")
