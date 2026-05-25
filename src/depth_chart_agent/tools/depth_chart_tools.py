@@ -168,9 +168,10 @@ def set_position_player(
         name: Player's full name (e.g. "Aaron Judge").
         depth_string: Ranking at this position. 1 = starter (required for
             every position), 2 = first backup, 3 = second backup.
-        reasoning: At least one specific signal justifying this ranking:
-            a lineup appearance frequency, a recent stat, or a transaction
-            (e.g. "Started 11 of last 14 games in RF; .310 BA last 14 games").
+        reasoning: Actual numbers observed in tool output justifying this
+            ranking — not estimates or examples from the prompt. Cite the
+            observed start count at this position and any relevant stat
+            (e.g. "Started [N] of last [M] games in [POS]; [stat] last [M] games").
     """
     if position not in VALID_POSITIONS:
         return f"Error: '{position}' is not a valid position."
@@ -226,9 +227,9 @@ def set_rotation_slot(team_id: int, slot: str, player_id: int, name: str, reason
             SP1 is the ace, SP5 is the fifth starter.
         player_id: MLB player ID from the active roster.
         name: Pitcher's full name.
-        reasoning: At least one specific signal: recent start order,
-            innings pitched, or transaction (e.g. "Has taken the ball every
-            5th day; leads staff with 7.2 IP per start").
+        reasoning: Actual numbers from your Phase 1.2 pitcher analysis — not
+            estimates. Cite the observed start count and computed average
+            IP/start (e.g. "Started [N] of last [M] games; avg [X.Y] IP/start").
     """
     if slot not in VALID_ROTATION_SLOTS:
         return f"Error: '{slot}' is not a valid rotation slot. Valid: {sorted(VALID_ROTATION_SLOTS)}"
@@ -283,9 +284,11 @@ def set_bullpen_role(team_id: int, player_id: int, name: str, role: str, reasoni
             - middle_relief: multi-inning or situational middle innings work.
             - long_relief: routinely pitches 2+ innings, often after a short start.
             - mop_up: enters in blowouts; lowest-leverage appearances.
-        reasoning: At least one specific signal: saves, holds, appearance
-            order, or innings pitched from recent games (e.g. "3 saves in
-            last 14 days; entered in 9th inning in all appearances").
+        reasoning: Actual numbers from your Phase 1.2 pitcher analysis — not
+            estimates. Cite the observed appearance count and the role-defining
+            stat (saves/blown saves for closer, holds for setup, IP per
+            appearance for long/mop-up)
+            (e.g. "[N] saves, [N] blown saves last [M] days; entered [Nth] inning in [N] of [M] appearances").
     """
     if role not in VALID_BULLPEN_ROLES:
         return f"Error: '{role}' is not a valid bullpen role. Valid: {sorted(VALID_BULLPEN_ROLES)}"

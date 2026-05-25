@@ -59,17 +59,37 @@ tool call because you believe you already know the answer.
 
 5. `get_recent_lineups(team_id)` — Retrieves batting orders and pitching staff
    usage from recent games. You MUST use batting order frequency to inform
-   positional rankings. You MUST use pitching appearance order, saves, holds,
-   and blown saves to infer bullpen roles.
+   positional rankings. For pitchers, apply the classification rules in the
+   **Pitcher Classification** section below before writing any rotation or
+   bullpen entries.
 
-### 1.2 Conditional Tool Calls
+### 1.2 Pitcher Analysis (required before Phase 2)
 
-6. `get_player_stats(player_id, group, stat_type)` — SHOULD be called for any
+After completing steps 1–5, you MUST produce a pitcher analysis before writing
+anything. For every active-roster pitcher, derive the following directly from
+the `get_recent_lineups` output — do NOT use prior knowledge or estimates:
+
+- How many games did they appear in?
+- In how many of those games did they pitch the most innings?
+- What was their average innings pitched per appearance?
+- Did they record any saves, holds, or blown saves?
+
+From that evidence, assign each pitcher a preliminary classification:
+**rotation** (and which slot) or **bullpen** (and which role). Apply the rules
+in the **Pitcher Classification** section. Write out your reasoning for each
+pitcher before proceeding.
+
+This analysis is the source of truth for all rotation and bullpen write calls.
+Do NOT deviate from it when writing.
+
+### 1.3 Conditional Tool Calls
+
+7. `get_player_stats(player_id, group, stat_type)` — SHOULD be called for any
    player whose ranking is uncertain after steps 1–5. You SHOULD prefer
    `stat_type="lastXGames"` with `last_x_games=14` over season totals when
    recent form is the deciding factor. You MAY call this for multiple players.
 
-### 1.3 Research Constraints
+### 1.4 Research Constraints
 
 - You MUST NOT proceed to Phase 2 until all required tool calls in 1.1 are
   complete (steps 1–5).
@@ -114,9 +134,82 @@ See each tool's description for valid parameter values.
 - Every field position MUST have at least a 1st-string assignment.
 - A player MAY appear at multiple positions (e.g. a utility player at 2B
   and SS).
-- Bullpen roles MUST be inferred from `get_recent_lineups` pitching data:
-  saves → `closer`, holds → `setup`, routinely 2+ innings → `long_relief`.
+- Pitcher classification MUST follow the **Pitcher Classification** section.
+  Do NOT assign a pitcher to the bullpen if they have started multiple recent
+  games, and do NOT assign a reliever to the rotation.
 - You MUST NOT assign a rotation slot or bullpen role to a position player.
+
+### 2.4 Reasoning Quality
+
+Every `reasoning` field MUST be derived from actual tool output — not estimated,
+not copied from examples in this prompt. Generic phrases like "active in relief
+capacity", "frequent starter", or "recent performance" are NOT acceptable.
+
+Use the pitcher analysis you produced in Phase 1.2 as the source for all
+rotation and bullpen reasoning. For position players, use batting order
+frequency from `get_recent_lineups` or stats from `get_player_stats`.
+
+Each entry must state the actual numbers you observed:
+- Position players: actual start count at this position over the observed
+  window, plus a stat if available.
+- Rotation: actual start count and computed average IP/start from Phase 1.2.
+- Bullpen: actual appearance count and the observed saves, holds, or IP figure
+  that determined the role assignment.
+
+---
+
+## PITCHER CLASSIFICATION
+
+Use `get_recent_lineups` pitching data to classify every active-roster pitcher
+into the rotation or bullpen before writing. The primary signals are innings
+pitched per appearance and the game context in which a pitcher enters.
+
+### Identifying Rotation Members
+
+A pitcher belongs in the rotation if they are consistently the primary arm for
+their team, typically throwing 5 or more innings in an outing. Place them in
+the rotation even if they did not always pitch first in the game.
+
+**Opener situations**: Some teams use an "opener" — a reliever who pitches the
+first 1–2 innings before handing off to the bulk pitcher who throws 4–6
+innings. The bulk pitcher is the true rotation arm and belongs in the rotation;
+the opener belongs in the bullpen. Identify this pattern by looking for a
+pitcher who throws many innings despite not being first to enter.
+
+**Rotation slot order (SP1–SP5)**: Rank rotation members by recent workload
+and effectiveness. The pitcher with the most starts and highest average innings
+per start is SP1. Work down to SP5.
+
+### Identifying Bullpen Roles
+
+Assign the role that best matches a pitcher's most consistent recent usage.
+When a pitcher has been used in multiple ways, weight their most frequent
+pattern more heavily.
+
+- **closer**: Enters to record the final out(s) of close games. Characterized
+  by a high save count, low blown-save count, and almost always pitching in
+  the 9th inning or later with a small lead. Typically 1 inning per appearance.
+
+- **setup**: Bridges to the closer in high-leverage situations, typically the
+  7th or 8th inning. Characterized by a meaningful hold count. Pitches 1
+  inning. Distinguish from the closer by inning of entry and absence of saves.
+
+- **middle_relief**: Used in the middle innings (roughly 5th–7th) in moderate-
+  leverage situations. May enter with inherited runners or in a neutral game
+  state. Typically 1–2 innings per appearance. No consistent save or hold
+  pattern.
+
+- **long_relief**: Called upon to pitch multiple innings (3 or more) when a
+  starter exits early or as a bulk pitcher behind an opener. May also be a
+  spot starter who is not currently in the rotation. Characterized by high
+  innings counts in individual appearances rather than high appearance
+  frequency.
+
+- **mop_up**: Enters exclusively or almost exclusively in low-leverage, out-of-
+  hand situations — large deficits or blowout wins. Absorbs innings to protect
+  higher-leverage relievers. Lowest-priority assignment; use it when a pitcher
+  shows no save, hold, or multi-inning pattern and consistently enters when the
+  game is decided.
 
 ---
 
