@@ -11,11 +11,17 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 
 from depth_chart_agent.agent.orchestrator import make_agent
 from depth_chart_agent.api.auth import require_api_key
-from depth_chart_agent.api.models import DepthChartResponse, RefreshInfo, RefreshStatusResponse
+from depth_chart_agent.api.models import (
+    DepthChartHistoryResponse,
+    DepthChartResponse,
+    DepthChartSnapshot,
+    RefreshInfo,
+    RefreshStatusResponse,
+)
 from depth_chart_agent.api.refresh import RefreshManager
 from depth_chart_agent.logging_config import configure_logging
 from depth_chart_agent.mlb_client import MLBApiError, get_team_id
-from depth_chart_agent.storage import read_chart
+from depth_chart_agent.storage import list_charts, read_chart, read_chart_at
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +169,40 @@ async def get_refresh_status(refresh_id: str):
         error=job.get("error"),
         depth_chart=depth_chart,
     )
+
+
+@app.get("/depth-chart/{team}/history", response_model=DepthChartHistoryResponse)
+async def get_depth_chart_history(team: str):
+    try:
+        team_id = await asyncio.to_thread(get_team_id, team)
+    except MLBApiError as e:
+        logger.warning("history team not found query=%s error=%s", team, e)
+        raise HTTPException(status_code=404, detail=str(e))
+
+    snapshots = list_charts(team_id)
+    latest = read_chart(team_id)
+    team_name = latest["team_name"] if latest else team
+    logger.info("GET /depth-chart/%s/history team_id=%s count=%d", team, team_id, len(snapshots))
+    return DepthChartHistoryResponse(
+        team_id=team_id,
+        team_name=team_name,
+        snapshots=[DepthChartSnapshot(**s) for s in snapshots],
+    )
+
+
+@app.get("/depth-chart/{team}/history/{snapshot_id}", response_model=DepthChartResponse)
+async def get_depth_chart_snapshot(team: str, snapshot_id: str):
+    try:
+        team_id = await asyncio.to_thread(get_team_id, team)
+    except MLBApiError as e:
+        logger.warning("snapshot team not found query=%s error=%s", team, e)
+        raise HTTPException(status_code=404, detail=str(e))
+
+    chart = read_chart_at(team_id, snapshot_id)
+    if chart is None:
+        raise HTTPException(status_code=404, detail=f"Snapshot '{snapshot_id}' not found for {team}")
+    logger.info("GET /depth-chart/%s/history/%s team_id=%s", team, snapshot_id, team_id)
+    return _chart_response(chart, "fresh", None)
 
 
 @app.post("/depth-chart/{team}/refresh", response_model=RefreshInfo)

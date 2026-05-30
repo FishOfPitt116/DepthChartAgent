@@ -165,6 +165,73 @@ def test_get_refresh_status_complete_includes_chart(client, mock_rm):
     assert data["depth_chart"]["cache_status"] == "fresh"
 
 
+SNAPSHOT_OLD = {"snapshot_id": "2026-05-28T10-00-00Z", "generated_at": "2026-05-28T10:00:00+00:00"}
+SNAPSHOT_NEW = {"snapshot_id": "2026-05-29T10-00-00Z", "generated_at": "2026-05-29T10:00:00+00:00"}
+
+
+# --- GET /depth-chart/{team}/history ---
+
+def test_get_history_team_not_found(client):
+    with patch("depth_chart_agent.api.app.get_team_id", side_effect=MLBApiError("No team found")):
+        resp = client.get("/depth-chart/faketeam/history")
+    assert resp.status_code == 404
+
+
+def test_get_history_returns_snapshots(client):
+    with (
+        patch("depth_chart_agent.api.app.get_team_id", return_value=TEAM_ID),
+        patch("depth_chart_agent.api.app.list_charts", return_value=[SNAPSHOT_NEW, SNAPSHOT_OLD]),
+        patch("depth_chart_agent.api.app.read_chart", return_value=FRESH_CHART),
+    ):
+        resp = client.get("/depth-chart/yankees/history")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["team_id"] == TEAM_ID
+    assert data["team_name"] == TEAM_NAME
+    assert len(data["snapshots"]) == 2
+    assert data["snapshots"][0]["snapshot_id"] == SNAPSHOT_NEW["snapshot_id"]
+
+
+def test_get_history_empty(client):
+    with (
+        patch("depth_chart_agent.api.app.get_team_id", return_value=TEAM_ID),
+        patch("depth_chart_agent.api.app.list_charts", return_value=[]),
+        patch("depth_chart_agent.api.app.read_chart", return_value=None),
+    ):
+        resp = client.get("/depth-chart/yankees/history")
+    assert resp.status_code == 200
+    assert resp.json()["snapshots"] == []
+
+
+# --- GET /depth-chart/{team}/history/{snapshot_id} ---
+
+def test_get_snapshot_team_not_found(client):
+    with patch("depth_chart_agent.api.app.get_team_id", side_effect=MLBApiError("No team found")):
+        resp = client.get("/depth-chart/faketeam/history/2026-05-28T10-00-00Z")
+    assert resp.status_code == 404
+
+
+def test_get_snapshot_not_found(client):
+    with (
+        patch("depth_chart_agent.api.app.get_team_id", return_value=TEAM_ID),
+        patch("depth_chart_agent.api.app.read_chart_at", return_value=None),
+    ):
+        resp = client.get("/depth-chart/yankees/history/2020-01-01T00-00-00Z")
+    assert resp.status_code == 404
+
+
+def test_get_snapshot_returns_chart(client):
+    with (
+        patch("depth_chart_agent.api.app.get_team_id", return_value=TEAM_ID),
+        patch("depth_chart_agent.api.app.read_chart_at", return_value=FRESH_CHART),
+    ):
+        resp = client.get(f"/depth-chart/yankees/history/{SNAPSHOT_OLD['snapshot_id']}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["team_id"] == TEAM_ID
+    assert data["cache_status"] == "fresh"
+
+
 # --- POST /depth-chart/{team}/refresh ---
 
 def test_force_refresh_no_api_key(client):
