@@ -33,3 +33,14 @@ class RefreshStatusResponse(BaseModel):
     completed_at: datetime | None = None
     error: str | None = None
     depth_chart: DepthChartResponse | None = None
+
+
+class DepthChartSnapshot(BaseModel):
+    snapshot_id: str
+    generated_at: datetime
+
+
+class DepthChartHistoryResponse(BaseModel):
+    team_id: int
+    team_name: str
+    snapshots: list[DepthChartSnapshot]
