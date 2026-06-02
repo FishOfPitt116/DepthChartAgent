@@ -26,6 +26,9 @@ logs/
 # Depth chart data store
 data/depth_charts/
 
+# CDK
+cdk/cdk.out/
+
 # IDE
 .vscode/
 .idea/
