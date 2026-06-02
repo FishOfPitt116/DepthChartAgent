@@ -20,6 +20,10 @@ dev = [
     "pytest>=8.2.0",
     "ruff>=0.4.0",
 ]
+infra = [
+    "aws-cdk-lib>=2.0.0",
+    "constructs>=10.0.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/depth_chart_agent"]
