@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: pip install -e ".[infra]"
+      - run: python3 -m venv .venv && .venv/bin/pip install -e ".[infra]"
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -55,7 +55,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: pip install -e ".[infra]"
+      - run: python3 -m venv .venv && .venv/bin/pip install -e ".[infra]"
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
