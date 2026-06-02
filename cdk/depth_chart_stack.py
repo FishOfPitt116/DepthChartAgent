@@ -1,4 +1,5 @@
 import aws_cdk as cdk
+from aws_cdk import aws_dynamodb as dynamodb
 from aws_cdk import aws_s3 as s3
 from constructs import Construct
 
@@ -22,3 +23,13 @@ class DepthChartStack(cdk.Stack):
         )
 
         cdk.CfnOutput(self, "BucketName", value=self.bucket.bucket_name)
+
+        self.table = dynamodb.Table(
+            self, "RefreshTable",
+            partition_key=dynamodb.Attribute(name="pk", type=dynamodb.AttributeType.STRING),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            time_to_live_attribute="ttl",
+            removal_policy=cdk.RemovalPolicy.RETAIN if is_prod else cdk.RemovalPolicy.DESTROY,
+        )
+
+        cdk.CfnOutput(self, "TableName", value=self.table.table_name)
