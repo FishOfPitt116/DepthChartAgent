@@ -1,5 +1,6 @@
 import aws_cdk as cdk
 from aws_cdk import aws_dynamodb as dynamodb
+from aws_cdk import aws_logs as logs
 from aws_cdk import aws_s3 as s3
 from constructs import Construct
 
@@ -33,3 +34,19 @@ class DepthChartStack(cdk.Stack):
         )
 
         cdk.CfnOutput(self, "TableName", value=self.table.table_name)
+
+        retention = logs.RetentionDays.TWO_WEEKS if not is_prod else logs.RetentionDays.ONE_MONTH
+
+        self.api_log_group = logs.LogGroup(
+            self, "ApiLogGroup",
+            log_group_name=f"/aws/lambda/depth-chart-api-{stage}",
+            retention=retention,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+        )
+
+        self.agent_runner_log_group = logs.LogGroup(
+            self, "AgentRunnerLogGroup",
+            log_group_name=f"/aws/lambda/depth-chart-agent-runner-{stage}",
+            retention=retention,
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+        )
