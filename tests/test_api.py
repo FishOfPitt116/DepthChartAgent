@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -52,7 +52,7 @@ def mock_rm():
 def client(mock_rm):
     with (
         patch("depth_chart_agent.api.app.RefreshManager", return_value=mock_rm),
-        patch("depth_chart_agent.api.app._run_agent", new_callable=AsyncMock),
+        patch("depth_chart_agent.api.app._invoke_agent_runner", new_callable=MagicMock),
     ):
         with TestClient(app) as c:
             yield c

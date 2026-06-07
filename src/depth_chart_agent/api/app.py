@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from agents import Runner
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+import boto3
+from fastapi import Depends, FastAPI, HTTPException
 
-from depth_chart_agent.agent.orchestrator import make_agent
 from depth_chart_agent.api.auth import require_api_key
 from depth_chart_agent.api.models import (
     DepthChartHistoryResponse,
@@ -26,7 +26,6 @@ from depth_chart_agent.storage import list_charts, read_chart, read_chart_at
 logger = logging.getLogger(__name__)
 
 _CACHE_TTL = int(os.getenv("CACHE_TTL_SECONDS", "86400"))
-_REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 _refresh: RefreshManager
 
@@ -35,8 +34,8 @@ _refresh: RefreshManager
 async def lifespan(app: FastAPI):
     configure_logging()
     global _refresh
-    _refresh = RefreshManager(_REDIS_URL)
-    logger.info("API started redis_url=%s cache_ttl=%ss", _REDIS_URL, _CACHE_TTL)
+    _refresh = RefreshManager()
+    logger.info("API started cache_ttl=%ss", _CACHE_TTL)
     yield
     await _refresh.close()
     logger.info("API shutdown")
@@ -76,33 +75,26 @@ def _chart_response(chart: dict, cache_status: str, refresh: RefreshInfo | None)
     )
 
 
-async def _trigger_refresh(team_id: int, team_name: str, background_tasks: BackgroundTasks) -> RefreshInfo:
-    """Create a job + lock and enqueue the background agent run."""
+def _invoke_agent_runner(team_id: int, team_name: str, refresh_id: str) -> None:
+    boto3.client("lambda").invoke(
+        FunctionName=os.environ["AGENT_RUNNER_FUNCTION_NAME"],
+        InvocationType="Event",
+        Payload=json.dumps({"team_id": team_id, "team_name": team_name, "refresh_id": refresh_id}),
+    )
+
+
+async def _trigger_refresh(team_id: int, team_name: str) -> RefreshInfo:
+    """Create a job + lock and invoke the agent runner Lambda."""
     refresh_id = await _refresh.create_job(team_id, team_name)
-    background_tasks.add_task(_run_agent, team_id, team_name, refresh_id)
+    await asyncio.to_thread(_invoke_agent_runner, team_id, team_name, refresh_id)
     job = await _refresh.get_job(refresh_id)
     return _refresh_info(job)
-
-
-async def _run_agent(team_id: int, team_name: str, refresh_id: str) -> None:
-    await _refresh.update_status(refresh_id, "running")
-    logger.info("agent run started refresh_id=%s team_id=%s team=%s", refresh_id, team_id, team_name)
-    try:
-        messages = [{"role": "user", "content": team_name}]
-        await Runner.run(make_agent(run_id=refresh_id), messages, max_turns=50)
-        await _refresh.update_status(refresh_id, "complete")
-        logger.info("agent run complete refresh_id=%s team_id=%s", refresh_id, team_id)
-    except Exception as e:
-        await _refresh.update_status(refresh_id, "failed", error=str(e))
-        logger.error("agent run failed refresh_id=%s team_id=%s error=%s", refresh_id, team_id, e)
-    finally:
-        await _refresh.release_lock(team_id)
 
 
 # --- routes ---
 
 @app.get("/depth-chart/{team}", response_model=DepthChartResponse)
-async def get_depth_chart(team: str, background_tasks: BackgroundTasks):
+async def get_depth_chart(team: str):
     try:
         team_id = await asyncio.to_thread(get_team_id, team)
     except MLBApiError as e:
@@ -111,14 +103,13 @@ async def get_depth_chart(team: str, background_tasks: BackgroundTasks):
 
     chart = read_chart(team_id)
 
-    # No chart yet — trigger initialisation
     if chart is None:
         lock_id = await _refresh.get_lock(team_id)
         if lock_id:
             job = await _refresh.get_job(lock_id)
             info = _refresh_info(job) if job else None
         else:
-            info = await _trigger_refresh(team_id, team, background_tasks)
+            info = await _trigger_refresh(team_id, team)
         logger.info("GET /depth-chart/%s team_id=%s cache_status=initializing refresh_id=%s",
                     team, team_id, info.refresh_id if info else None)
         return DepthChartResponse(
@@ -133,7 +124,6 @@ async def get_depth_chart(team: str, background_tasks: BackgroundTasks):
         logger.info("GET /depth-chart/%s team_id=%s cache_status=fresh", team, team_id)
         return _chart_response(chart, "fresh", None)
 
-    # Stale — check for an in-progress refresh
     lock_id = await _refresh.get_lock(team_id)
     if lock_id:
         job = await _refresh.get_job(lock_id)
@@ -142,7 +132,7 @@ async def get_depth_chart(team: str, background_tasks: BackgroundTasks):
                     team, team_id, lock_id)
         return _chart_response(chart, "refreshing", info)
 
-    info = await _trigger_refresh(team_id, chart["team_name"], background_tasks)
+    info = await _trigger_refresh(team_id, chart["team_name"])
     logger.info("GET /depth-chart/%s team_id=%s cache_status=stale refresh_id=%s",
                 team, team_id, info.refresh_id)
     return _chart_response(chart, "stale", info)
@@ -208,7 +198,6 @@ async def get_depth_chart_snapshot(team: str, snapshot_id: str):
 @app.post("/depth-chart/{team}/refresh", response_model=RefreshInfo)
 async def force_refresh(
     team: str,
-    background_tasks: BackgroundTasks,
     _: None = Depends(require_api_key),
 ):
     try:
@@ -217,7 +206,6 @@ async def force_refresh(
         logger.warning("force refresh team not found query=%s error=%s", team, e)
         raise HTTPException(status_code=404, detail=str(e))
 
-    # Return the existing job if one is already running
     lock_id = await _refresh.get_lock(team_id)
     if lock_id:
         job = await _refresh.get_job(lock_id)
@@ -227,6 +215,6 @@ async def force_refresh(
 
     chart = read_chart(team_id)
     team_name = chart["team_name"] if chart else team
-    info = await _trigger_refresh(team_id, team_name, background_tasks)
+    info = await _trigger_refresh(team_id, team_name)
     logger.info("force refresh triggered team_id=%s refresh_id=%s", team_id, info.refresh_id)
     return info

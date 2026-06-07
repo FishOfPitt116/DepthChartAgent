@@ -23,13 +23,14 @@ def configure_logging() -> None:
     if logger.handlers:
         return  # already configured (e.g. uvicorn --reload re-enters lifespan)
 
-    _LOG_DIR.mkdir(parents=True, exist_ok=True)
-    fh = logging.handlers.RotatingFileHandler(
-        _LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5
-    )
-    fh.setFormatter(_FMT)
-    logger.addHandler(fh)
-
     sh = logging.StreamHandler()
     sh.setFormatter(_FMT)
     logger.addHandler(sh)
+
+    if not os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
+        fh = logging.handlers.RotatingFileHandler(
+            _LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5
+        )
+        fh.setFormatter(_FMT)
+        logger.addHandler(fh)
