@@ -35,7 +35,10 @@ jobs:
           aws-region: us-east-1
 
       - name: Deploy gamma
-        run: cdk deploy "DepthChartGamma/**" --require-approval never
+        run: >
+          cdk deploy "DepthChartGamma/**" --require-approval never
+          --context openai_api_key=${{ secrets.OPENAI_API_KEY }}
+          --context depth_chart_api_key=${{ secrets.DEPTH_CHART_API_KEY }}
         working-directory: cdk
 
   deploy-prod:
@@ -63,5 +66,8 @@ jobs:
           aws-region: us-east-1
 
       - name: Deploy prod
-        run: cdk deploy "DepthChartProd/**" --require-approval never
+        run: >
+          cdk deploy "DepthChartProd/**" --require-approval never
+          --context openai_api_key=${{ secrets.OPENAI_API_KEY }}
+          --context depth_chart_api_key=${{ secrets.DEPTH_CHART_API_KEY }}
         working-directory: cdk

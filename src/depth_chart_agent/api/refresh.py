@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
+import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-import redis.asyncio as aioredis
+import boto3
 
 logger = logging.getLogger(__name__)
 
@@ -21,38 +22,68 @@ def _now() -> str:
 
 
 class RefreshManager:
-    def __init__(self, redis_url: str) -> None:
-        self._redis = aioredis.from_url(redis_url, decode_responses=True)
+    def __init__(self) -> None:
+        self._table = boto3.resource("dynamodb").Table(os.environ["DYNAMODB_TABLE"])
 
     async def close(self) -> None:
-        await self._redis.aclose()
+        pass
 
     async def get_lock(self, team_id: int) -> str | None:
         """Return the refresh_id for an in-progress run, or None."""
-        return await self._redis.get(f"refresh:lock:{team_id}")
+        resp = await asyncio.to_thread(
+            self._table.get_item, Key={"pk": f"lock#{team_id}"}
+        )
+        item = resp.get("Item")
+        return item["refresh_id"] if item else None
 
     async def create_job(self, team_id: int, team_name: str) -> str:
         """Create a job record and in-progress lock. Returns the new refresh_id."""
         refresh_id = str(uuid.uuid4())
-        job = {
-            "refresh_id": refresh_id,
-            "team_id": team_id,
-            "team_name": team_name,
-            "status": "pending",
-            "triggered_at": _now(),
-            "completed_at": None,
-            "error": None,
-        }
-        pipe = self._redis.pipeline()
-        pipe.set(f"refresh:{refresh_id}", json.dumps(job), ex=_JOB_TTL)
-        pipe.set(f"refresh:lock:{team_id}", refresh_id, ex=_LOCK_TTL)
-        await pipe.execute()
+        now = datetime.now(timezone.utc)
+        job_ttl = int((now + timedelta(seconds=_JOB_TTL)).timestamp())
+        lock_ttl = int((now + timedelta(seconds=_LOCK_TTL)).timestamp())
+
+        await asyncio.to_thread(
+            self._table.put_item,
+            Item={
+                "pk": f"job#{refresh_id}",
+                "refresh_id": refresh_id,
+                "team_id": team_id,
+                "team_name": team_name,
+                "status": "pending",
+                "triggered_at": now.isoformat(),
+                "completed_at": None,
+                "error": None,
+                "ttl": job_ttl,
+            },
+        )
+        await asyncio.to_thread(
+            self._table.put_item,
+            Item={
+                "pk": f"lock#{team_id}",
+                "refresh_id": refresh_id,
+                "ttl": lock_ttl,
+            },
+        )
         logger.info("refresh job created refresh_id=%s team_id=%s team=%s", refresh_id, team_id, team_name)
         return refresh_id
 
     async def get_job(self, refresh_id: str) -> dict | None:
-        data = await self._redis.get(f"refresh:{refresh_id}")
-        return json.loads(data) if data else None
+        resp = await asyncio.to_thread(
+            self._table.get_item, Key={"pk": f"job#{refresh_id}"}
+        )
+        item = resp.get("Item")
+        if not item:
+            return None
+        return {
+            "refresh_id": item["refresh_id"],
+            "team_id": int(item["team_id"]),
+            "team_name": item["team_name"],
+            "status": item["status"],
+            "triggered_at": item["triggered_at"],
+            "completed_at": item.get("completed_at"),
+            "error": item.get("error"),
+        }
 
     async def update_status(
         self,
@@ -60,19 +91,30 @@ class RefreshManager:
         status: RefreshStatus,
         error: str | None = None,
     ) -> None:
-        data = await self._redis.get(f"refresh:{refresh_id}")
-        if data is None:
-            return
-        job = json.loads(data)
-        job["status"] = status
+        update_expr = "SET #status = :status"
+        expr_names = {"#status": "status"}
+        expr_values = {":status": status}
+
         if status in ("complete", "failed"):
-            job["completed_at"] = _now()
+            update_expr += ", completed_at = :completed_at"
+            expr_values[":completed_at"] = _now()
         if error:
-            job["error"] = error
-        await self._redis.set(f"refresh:{refresh_id}", json.dumps(job), ex=_JOB_TTL)
+            update_expr += ", #error = :error"
+            expr_names["#error"] = "error"
+            expr_values[":error"] = error
+
+        await asyncio.to_thread(
+            self._table.update_item,
+            Key={"pk": f"job#{refresh_id}"},
+            UpdateExpression=update_expr,
+            ExpressionAttributeNames=expr_names,
+            ExpressionAttributeValues=expr_values,
+        )
         level = logging.ERROR if status == "failed" else logging.INFO
-        logger.log(level, "refresh job %s status=%s team_id=%s%s",
-                   refresh_id, status, job["team_id"], f" error={error}" if error else "")
+        logger.log(level, "refresh job %s status=%s%s",
+                   refresh_id, status, f" error={error}" if error else "")
 
     async def release_lock(self, team_id: int) -> None:
-        await self._redis.delete(f"refresh:lock:{team_id}")
+        await asyncio.to_thread(
+            self._table.delete_item, Key={"pk": f"lock#{team_id}"}
+        )
